@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -413,7 +414,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			  from pg_stat_user_tables
 			  where n_live_tup > 10000
 			  order by index_usage_pct asc nulls last
-			  limit 10`
+			  limit 50`
 		if rows, err := conn.Query(ctx, q); err == nil {
 			for rows.Next() {
 				var iu IndexUsage
@@ -429,7 +430,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				  from pg_stat_all_tables
 				  where schemaname not in ('pg_catalog','information_schema') and n_live_tup > 10000
 				  order by index_usage_pct asc nulls last
-				  limit 10`); err == nil {
+				  limit 50`); err == nil {
 				for rows.Next() {
 					var iu IndexUsage
 					_ = rows.Scan(&iu.Schema, &iu.Table, &iu.IndexUsagePct, &iu.Rows)
@@ -548,6 +549,11 @@ func fetchPSSVariant(ctx context.Context, conn *pgx.Conn, schema, colTotal, colM
 			}
 			st.IOTime = 0
 			st.CPUTime = st.TotalTime
+		}
+		// Filter out trivial utility statements
+		q := strings.ToUpper(strings.TrimSpace(st.Query))
+		if strings.HasPrefix(q, "COMMIT") || strings.HasPrefix(q, "BEGIN") || strings.HasPrefix(q, "DISCARD ALL") {
+			continue
 		}
 		out = append(out, st)
 	}

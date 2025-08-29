@@ -1,10 +1,12 @@
 package report
 
 import (
+	"fmt"
 	"html/template"
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/koltyakov/pghealth/internal/analyze"
@@ -31,7 +33,13 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	})
 	sort.Slice(res.IndexUnused, func(i, j int) bool { return res.IndexUnused[i].SizeBytes > res.IndexUnused[j].SizeBytes })
 	sort.Slice(res.Indexes, func(i, j int) bool { return res.Indexes[i].SizeBytes > res.Indexes[j].SizeBytes })
-	sort.Slice(res.Tables, func(i, j int) bool { return res.Tables[i].SizeBytes > res.Tables[j].SizeBytes })
+	// Prepare sorted copies for top tables by rows and by size
+	tablesBySize := make([]collect.TableStat, len(res.Tables))
+	copy(tablesBySize, res.Tables)
+	sort.Slice(tablesBySize, func(i, j int) bool { return tablesBySize[i].SizeBytes > tablesBySize[j].SizeBytes })
+	tablesByRows := make([]collect.TableStat, len(res.Tables))
+	copy(tablesByRows, res.Tables)
+	sort.Slice(tablesByRows, func(i, j int) bool { return tablesByRows[i].NLiveTup > tablesByRows[j].NLiveTup })
 
 	// Precompute whether any client has a hostname to show
 	showHostname := false
@@ -42,8 +50,34 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		}
 	}
 
+	// Filter connections activity to hide empty database/state entries and zero counts
+	activity := make([]collect.Activity, 0, len(res.Activity))
+	for _, it := range res.Activity {
+		if it.Datname == "" {
+			continue
+		}
+		if it.Count <= 0 {
+			continue
+		}
+		activity = append(activity, it)
+	}
+
 	tmpl := template.Must(template.New("report").Funcs(template.FuncMap{
 		"since": func(t time.Time) string { return time.Since(t).String() },
+		"add":   func(a, b int64) int64 { return a + b },
+		"fmtTime": func(t time.Time) string {
+			if t.IsZero() {
+				return "n/a"
+			}
+			return t.Local().Format("2006-01-02 15:04:05 MST")
+		},
+		"fmtDur": func(d time.Duration) string { return humanizeDuration(d) },
+		"fmtUptime": func(t time.Time) string {
+			if t.IsZero() {
+				return "n/a"
+			}
+			return humanizeDuration(time.Since(t))
+		},
 		"fmtBytes": func(b int64) string {
 			units := []string{"B", "KB", "MB", "GB", "TB"}
 			f := float64(b)
@@ -67,7 +101,10 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		A            analyze.Analysis
 		Meta         collect.Meta
 		ShowHostname bool
-	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname}
+		Activity     []collect.Activity
+		TablesByRows []collect.TableStat
+		TablesBySize []collect.TableStat
+	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize}
 	return tmpl.Execute(f, data)
 }
 
@@ -127,6 +164,34 @@ func addThousands(s string) string {
 	return string(out)
 }
 
+// humanizeDuration renders a duration like "2d 3h 4m" or "5m 12s" depending on magnitude
+func humanizeDuration(d time.Duration) string {
+	if d < 0 {
+		d = -d
+	}
+	total := int64(d.Seconds())
+	days := total / 86400
+	total %= 86400
+	hours := total / 3600
+	total %= 3600
+	mins := total / 60
+	secs := total % 60
+	parts := make([]string, 0, 3)
+	if days > 0 {
+		parts = append(parts, fmt.Sprintf("%dd", days))
+	}
+	if hours > 0 {
+		parts = append(parts, fmt.Sprintf("%dh", hours))
+	}
+	if mins > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", mins))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%ds", secs))
+	}
+	return strings.Join(parts, " ")
+}
+
 const htmlTemplate = `<!doctype html>
 <html>
 <head>
@@ -138,29 +203,33 @@ const htmlTemplate = `<!doctype html>
     h1{font-size:20px;margin:0}
     h2{margin-top:24px;border-bottom:1px solid #e5e7eb;padding-bottom:4px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
-    .card{border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#fff;box-shadow:0 1px 1px rgba(0,0,0,.02)}
+  .card{border:1px solid #e5e7eb;padding:12px;background:#fff}
     .warn{border-left:4px solid #f59e0b}
     .rec{border-left:4px solid #10b981}
     .info{border-left:4px solid #3b82f6}
-  .table-wrap{margin:8px 0; border:1px solid #9ca3af; border-radius:8px; overflow:hidden}
+  .table-wrap{margin:8px 0; border:1px solid #9ca3af; overflow:hidden}
   table{border-collapse:collapse;border-spacing:0;width:100%}
   th,td{border:1px solid #9ca3af;padding:10px 12px;text-align:left;vertical-align:top}
   thead th{background:#f3f4f6;font-weight:600;border-bottom:2px solid #9ca3af}
   tbody tr:nth-child(even){background:#fcfcfd}
   tbody tr:hover{background:#f8fafc}
-    code{background:#f3f4f6;padding:2px 4px;border-radius:4px}
+  code{background:#f3f4f6;padding:2px 4px}
   .muted{color:#6b7280}
   small{font-size:12px;color:#4b5563}
-    .table-wrap.collapsed tbody tr:nth-child(n+11){display:none}
-    .table-tools{margin:6px 0 14px;display:flex;justify-content:flex-end}
-    .toggle-rows{background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:6px 10px;cursor:pointer}
+  .table-wrap.collapsed tbody tr:nth-child(n+11){display:none}
+  .table-tools{margin:6px 0 14px;display:flex;justify-content:flex-end;padding:0 12px}
+  .toggle-rows{background:#fff;border:1px solid #d1d5db;padding:6px 10px;cursor:pointer}
     .toggle-rows:hover{background:#f9fafb}
+  pre{white-space:pre-wrap;max-height:8em;overflow:auto;margin:0;background:#f8fafc;border:1px solid #e5e7eb;padding:8px}
+  .query-short{display:block;max-height:4em;overflow:hidden}
+  .query-full{display:none}
+  .show-full{background:#fff;border:1px solid #d1d5db;padding:2px 6px;margin-top:6px;cursor:pointer}
   </style>
   </head>
 <body>
   <header>
     <h1>pghealth report</h1>
-    <div>Version: {{.Meta.Version}} &middot; Started: {{.Meta.StartedAt}} &middot; Duration: {{.Meta.Duration}}</div>
+  <div>Version: {{.Meta.Version}} &middot; Started: {{fmtTime .Meta.StartedAt}} &middot; Duration: {{fmtDur .Meta.Duration}}</div>
     <div>Server: {{.Res.ConnInfo.Version}} &middot; DB: {{.Res.ConnInfo.CurrentDB}} &middot; User: {{.Res.ConnInfo.CurrentUser}} &middot; SSL: {{.Res.ConnInfo.SSL}}</div>
   </header>
 
@@ -181,14 +250,14 @@ const htmlTemplate = `<!doctype html>
   <table>
     <thead><tr><th>Database</th><th>State</th><th>Count</th></tr></thead>
     <tbody>
-    {{if .Res.Activity}}
-      {{range .Res.Activity}}<tr><td>{{.Datname}}</td><td>{{.State}}</td><td>{{fmtInt .Count}}</td></tr>{{end}}
+    {{if .Activity}}
+      {{range .Activity}}<tr><td>{{.Datname}}</td><td>{{.State}}</td><td>{{fmtInt .Count}}</td></tr>{{end}}
     {{else}}
       <tr><td colspan="3" class="muted">No data</td></tr>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.Activity) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Activity) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Databases</h2>
@@ -204,6 +273,36 @@ const htmlTemplate = `<!doctype html>
     </tbody>
   </table>
   {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  </div>
+
+  <h2>Top tables by rows</h2>
+  <div class="table-wrap collapsed">
+  <table>
+    <thead><tr><th>Schema</th><th>Table</th><th>Rows</th></tr></thead>
+    <tbody>
+    {{if .TablesByRows}}
+      {{range $i, $t := .TablesByRows}}{{if lt $i 100}}<tr><td>{{$t.Schema}}</td><td>{{$t.Name}}</td><td>{{fmtI64 $t.NLiveTup}}</td></tr>{{end}}{{end}}
+    {{else}}
+      <tr><td colspan="3" class="muted">No data</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  </div>
+
+  <h2>Top tables by size</h2>
+  <div class="table-wrap collapsed">
+  <table>
+    <thead><tr><th>Schema</th><th>Table</th><th>Size, Mb</th></tr></thead>
+    <tbody>
+    {{if .TablesBySize}}
+      {{range $i, $t := .TablesBySize}}{{if lt $i 100}}<tr><td>{{$t.Schema}}</td><td>{{$t.Name}}</td><td>{{fmtMB $t.SizeBytes}}</td></tr>{{end}}{{end}}
+    {{else}}
+      <tr><td colspan="3" class="muted">No data</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Settings (subset)</h2>
@@ -251,22 +350,7 @@ const htmlTemplate = `<!doctype html>
   {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
-  <h2>Healthchecks</h2>
-  <div class="grid">
-    <div class="card info">
-      <strong>Uptime</strong>
-      <div>{{if .Res.ConnInfo.StartTime}}{{since .Res.ConnInfo.StartTime}} (since {{.Res.ConnInfo.StartTime}}){{else}}<span class="muted">n/a</span>{{end}}</div>
-    </div>
-    <div class="card info">
-      <strong>Cache hit ratio</strong>
-      <div>Current DB: {{if gt .Res.CacheHitCurrent 0.0}}{{fmtF2 .Res.CacheHitCurrent}}%{{else}}<span class="muted">n/a</span>{{end}}</div>
-      <div>Overall: {{if gt .Res.CacheHitOverall 0.0}}{{fmtF2 .Res.CacheHitOverall}}%{{else}}<span class="muted">n/a</span>{{end}}</div>
-    </div>
-    <div class="card info">
-      <strong>Connections</strong>
-      <div>Used: {{fmtInt .Res.TotalConnections}} / {{fmtInt .Res.ConnInfo.MaxConnections}}</div>
-    </div>
-  </div>
+  
 
   <h2>Tables size (rows, Mb)</h2>
   <div class="table-wrap collapsed">
@@ -289,7 +373,12 @@ const htmlTemplate = `<!doctype html>
     <thead><tr><th>Database</th><th>blks_hit</th><th>blks_read</th><th>Hit ratio (%)</th></tr></thead>
     <tbody>
     {{if .Res.CacheHits}}
-      {{range .Res.CacheHits}}<tr><td>{{.Datname}}</td><td>{{fmtI64 .BlksHit}}</td><td>{{fmtI64 .BlksRead}}</td><td>{{fmtF2 .Ratio}}</td></tr>{{end}}
+      {{/* filter rows with zero total */}}
+      {{- $rows := 0 -}}
+      {{- range .Res.CacheHits -}}
+        {{- $total := (printf "%d" (add .BlksHit .BlksRead)) -}}
+      {{- end -}}
+      {{range .Res.CacheHits}}{{if gt (add .BlksHit .BlksRead) 0}}<tr><td>{{.Datname}}</td><td>{{fmtI64 .BlksHit}}</td><td>{{fmtI64 .BlksRead}}</td><td>{{fmtF2 .Ratio}}</td></tr>{{end}}{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
@@ -323,7 +412,10 @@ const htmlTemplate = `<!doctype html>
     <thead><tr><th>Calls</th><th>Total time (ms)</th><th>Mean time (ms)</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByTotalTime}}
-      {{range .Res.Statements.TopByTotalTime}}<tr><td>{{fmtF0 .Calls}}</td><td>{{fmtF2 .TotalTime}}</td><td>{{fmtF2 .MeanTime}}</td><td><pre>{{.Query}}</pre></td></tr>{{end}}
+      {{range .Res.Statements.TopByTotalTime}}<tr><td>{{fmtF0 .Calls}}</td><td>{{fmtF2 .TotalTime}}</td><td>{{fmtF2 .MeanTime}}</td><td>
+        <pre class="query"><span class="query-short">{{.Query}}</span><span class="query-full">{{.Query}}</span></pre>
+        <button class="show-full">Show full</button>
+      </td></tr>{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
@@ -331,35 +423,40 @@ const htmlTemplate = `<!doctype html>
   </table>{{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <h2>Top queries by CPU (approx)</h2>
+  {{if .Res.Statements.TopByCPU}}
   <div class="table-wrap collapsed"><table>
     <thead><tr><th>Calls</th><th>CPU time (ms)</th><th>Total time (ms)</th><th>Query</th></tr></thead>
     <tbody>
-    {{if .Res.Statements.TopByCPU}}
-      {{range .Res.Statements.TopByCPU}}<tr><td>{{fmtF0 .Calls}}</td><td>{{fmtF2 .CPUTime}}</td><td>{{fmtF2 .TotalTime}}</td><td><pre>{{.Query}}</pre></td></tr>{{end}}
-    {{else}}
-      <tr><td colspan="4" class="muted">No data</td></tr>
-    {{end}}
+      {{range .Res.Statements.TopByCPU}}<tr><td>{{fmtF0 .Calls}}</td><td>{{fmtF2 .CPUTime}}</td><td>{{fmtF2 .TotalTime}}</td><td>
+        <pre class="query"><span class="query-short">{{.Query}}</span><span class="query-full">{{.Query}}</span></pre>
+        <button class="show-full">Show full</button>
+      </td></tr>{{end}}
     </tbody>
   </table>{{if gt (len .Res.Statements.TopByCPU) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
+  {{end}}
 
   <h2>Top queries by IO time</h2>
+  {{if .Res.Statements.TopByIO}}
   <div class="table-wrap collapsed"><table>
     <thead><tr><th>Calls</th><th>IO time (ms)</th><th>Read (ms)</th><th>Write (ms)</th><th>Query</th></tr></thead>
     <tbody>
-    {{if .Res.Statements.TopByIO}}
-      {{range .Res.Statements.TopByIO}}<tr><td>{{fmtF0 .Calls}}</td><td>{{fmtF2 .IOTime}}</td><td>{{fmtF2 .BlkReadTime}}</td><td>{{fmtF2 .BlkWriteTime}}</td><td><pre>{{.Query}}</pre></td></tr>{{end}}
-    {{else}}
-      <tr><td colspan="5" class="muted">No data</td></tr>
-    {{end}}
+      {{range .Res.Statements.TopByIO}}<tr><td>{{fmtF0 .Calls}}</td><td>{{fmtF2 .IOTime}}</td><td>{{fmtF2 .BlkReadTime}}</td><td>{{fmtF2 .BlkWriteTime}}</td><td>
+        <pre class="query"><span class="query-short">{{.Query}}</span><span class="query-full">{{.Query}}</span></pre>
+        <button class="show-full">Show full</button>
+      </td></tr>{{end}}
     </tbody>
   </table>{{if gt (len .Res.Statements.TopByIO) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
+  {{end}}
 
   <h2>Top queries by calls</h2>
   <div class="table-wrap collapsed"><table>
     <thead><tr><th>Calls</th><th>Total time (ms)</th><th>Mean time (ms)</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByCalls}}
-      {{range .Res.Statements.TopByCalls}}<tr><td>{{fmtF0 .Calls}}</td><td>{{fmtF2 .TotalTime}}</td><td>{{fmtF2 .MeanTime}}</td><td><pre>{{.Query}}</pre></td></tr>{{end}}
+      {{range .Res.Statements.TopByCalls}}<tr><td>{{fmtF0 .Calls}}</td><td>{{fmtF2 .TotalTime}}</td><td>{{fmtF2 .MeanTime}}</td><td>
+        <pre class="query"><span class="query-short">{{.Query}}</span><span class="query-full">{{.Query}}</span></pre>
+        <button class="show-full">Show full</button>
+      </td></tr>{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
@@ -405,7 +502,7 @@ const htmlTemplate = `<!doctype html>
     </tbody>
   </table>{{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
-  <footer style="margin-top:24px;color:#6b7280">Report generated at {{.Meta.StartedAt}} in {{.Meta.Duration}}</footer>
+  <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
   <script>
   (function(){
@@ -415,6 +512,17 @@ const htmlTemplate = `<!doctype html>
         if(!wrap) return;
         wrap.classList.toggle('collapsed');
         e.target.textContent = wrap.classList.contains('collapsed') ? 'Show all' : 'Show less';
+      }
+      if(e.target && e.target.classList.contains('show-full')){
+        var td = e.target.closest('td');
+        if(!td) return;
+        var shortEl = td.querySelector('.query-short');
+        var fullEl = td.querySelector('.query-full');
+        if(!shortEl || !fullEl) return;
+        var expanded = fullEl.style.display === 'block';
+        fullEl.style.display = expanded ? 'none' : 'block';
+        shortEl.style.display = expanded ? 'block' : 'none';
+        e.target.textContent = expanded ? 'Show full' : 'Show less';
       }
     });
   })();
