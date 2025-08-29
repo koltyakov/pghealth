@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/koltyakov/pghealth/internal/collect"
@@ -276,6 +277,68 @@ func Run(res collect.Result) Analysis {
 				Severity:    "info",
 				Description: fmt.Sprintf("Calls: %.0f, TotalTime: %.2f ms", q.Calls, q.TotalTime),
 				Action:      "Review execution plan and caching. Consider increasing work_mem for heavy sorts/aggregations.",
+			})
+		}
+
+		// Derive optimization recommendations from collected EXPLAIN plan advice
+		seqScanTables := map[string]struct{}{}
+		hasSort := false
+		hasJoin := false
+		for _, st := range res.Statements.TopByTotalTime {
+			if st.Advice == nil {
+				continue
+			}
+			for _, h := range st.Advice.Highlights {
+				uh := strings.ToUpper(h)
+				if strings.HasPrefix(uh, "SEQ SCAN ON ") {
+					// extract table name portion after prefix using original case
+					name := h[len("Seq Scan on "):]
+					name = strings.TrimSpace(name)
+					if name != "" {
+						seqScanTables[name] = struct{}{}
+					}
+				}
+				if strings.Contains(uh, "SORT") {
+					hasSort = true
+				}
+				if strings.Contains(uh, "JOIN") {
+					hasJoin = true
+				}
+			}
+		}
+		if len(seqScanTables) > 0 {
+			// build table list
+			names := make([]string, 0, len(seqScanTables))
+			for n := range seqScanTables {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			// cap the list for readability
+			max := 8
+			if len(names) > max {
+				names = names[:max]
+			}
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Slow queries use sequential scans",
+				Severity:    "rec",
+				Description: fmt.Sprintf("Sequential scans detected on: %s", strings.Join(names, ", ")),
+				Action:      "Create or refine indexes on selective WHERE and JOIN columns; analyze tables; ensure statistics are up to date.",
+			})
+		}
+		if hasSort {
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Sorting in slow queries may lack index support",
+				Severity:    "rec",
+				Description: "Plans include Sort nodes for top slow queries.",
+				Action:      "Add or adjust indexes matching ORDER BY leading columns to enable sorted index scans where appropriate.",
+			})
+		}
+		if hasJoin {
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Joins in slow queries may be missing indexes",
+				Severity:    "rec",
+				Description: "Join operations detected; missing or suboptimal indexes can cause hash/merge joins to spill or nested loops to scan many rows.",
+				Action:      "Ensure join key columns are indexed on both sides; consider composite indexes matching join + filter predicates.",
 			})
 		}
 	} else {
