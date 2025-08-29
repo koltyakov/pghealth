@@ -131,13 +131,14 @@ type Statement struct {
 	LocalBlksWrite  float64
 	TempBlksRead    float64
 	TempBlksWrite   float64
+	Advice          *PlanAdvice
 }
 
-// Hints for slow queries based on EXPLAIN
-type QueryPlanHint struct {
-	Query         string
-	SeqScanTables []string
-	Plan          string
+// PlanAdvice contains collected EXPLAIN plan text, highlights and human suggestions
+type PlanAdvice struct {
+	Plan        string
+	Highlights  []string
+	Suggestions []string
 }
 
 // Healthcheck types
@@ -357,7 +358,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		res.Statements.Available = len(res.Statements.TopByTotalTime) > 0 || len(res.Statements.TopByCalls) > 0
 	}
 
-	// Best-effort EXPLAIN plan hints for top slow queries (safe subset only)
+	// Best-effort EXPLAIN plan collection and analysis for top slow queries (safe subset only)
 	if len(res.Statements.TopByTotalTime) > 0 {
 		limit := 5
 		if len(res.Statements.TopByTotalTime) < limit {
@@ -379,10 +380,14 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			if err != nil {
 				continue
 			}
+			var planLines []string
 			var seqOn []string
+			hasSort := false
+			hasJoin := false
 			for planRows.Next() {
 				var line string
 				_ = planRows.Scan(&line)
+				planLines = append(planLines, line)
 				// Detect Seq Scan on table
 				up := strings.ToUpper(line)
 				if strings.Contains(up, "SEQ SCAN ON ") {
@@ -398,13 +403,70 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 						seqOn = append(seqOn, name)
 					}
 				}
+				if strings.HasPrefix(strings.TrimSpace(up), "SORT ") || strings.Contains(up, " SORT ") {
+					hasSort = true
+				}
+				if strings.Contains(up, " JOIN ") {
+					hasJoin = true
+				}
 			}
 			planRows.Close()
+			advice := &PlanAdvice{}
+			if len(planLines) > 0 {
+				advice.Plan = strings.Join(planLines, "\n")
+			}
+			// Highlights
+			for _, tname := range seqOn {
+				advice.Highlights = append(advice.Highlights, fmt.Sprintf("Seq Scan on %s", tname))
+			}
+			if hasSort {
+				advice.Highlights = append(advice.Highlights, "Explicit Sort in plan")
+			}
+			if hasJoin {
+				advice.Highlights = append(advice.Highlights, "Join present")
+			}
+			// Suggestions
+			// Helper to find table stats and index presence by table name (best-effort, schema-agnostic)
+			findTable := func(name string) (TableStat, bool) {
+				for _, t := range res.Tables {
+					if strings.EqualFold(t.Name, name) {
+						return t, true
+					}
+				}
+				return TableStat{}, false
+			}
+			hasAnyIndex := func(name string) bool {
+				for _, idx := range res.Indexes {
+					if strings.EqualFold(idx.Table, name) {
+						return true
+					}
+				}
+				return false
+			}
 			if len(seqOn) > 0 {
-				// append hint as an info in res.Errors for now? Better: leave to report via plan hints field; adding to Result would require public change; we can reuse Errors but better add field
-				// Skipping adding to result if types are immutable
-				// For minimal change, append a textual hint to Errors bucket
-				res.Errors = append(res.Errors, fmt.Sprintf("Seq Scan detected in slow query on: %s", strings.Join(seqOn, ", ")))
+				for _, tn := range seqOn {
+					if ts, ok := findTable(tn); ok {
+						if ts.NLiveTup > 100000 { // large table heuristic
+							advice.Suggestions = append(advice.Suggestions, fmt.Sprintf("Large table %s scanned sequentially — consider adding/using an index on predicate/join columns.", tn))
+						} else {
+							advice.Suggestions = append(advice.Suggestions, fmt.Sprintf("Sequential scan on %s — verify if intentional (small table) or add an index.", tn))
+						}
+						if !hasAnyIndex(tn) {
+							advice.Suggestions = append(advice.Suggestions, fmt.Sprintf("No indexes found on %s — create indexes on frequently filtered or joined columns.", tn))
+						}
+					} else {
+						advice.Suggestions = append(advice.Suggestions, fmt.Sprintf("Sequential scan on %s — consider index on predicate columns.", tn))
+					}
+				}
+			}
+			if hasSort {
+				advice.Suggestions = append(advice.Suggestions, "Add or adjust an index matching ORDER BY to avoid Sort when appropriate.")
+			}
+			if hasJoin {
+				advice.Suggestions = append(advice.Suggestions, "Ensure join keys are indexed on both sides (or use suitable composite indexes).")
+			}
+			if advice.Plan != "" || len(advice.Suggestions) > 0 {
+				res.Statements.TopByTotalTime[i].Advice = advice
 			}
 		}
 	}

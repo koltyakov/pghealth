@@ -63,8 +63,9 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	}
 
 	tmpl := template.Must(template.New("report").Funcs(template.FuncMap{
-		"since": func(t time.Time) string { return time.Since(t).String() },
-		"add":   func(a, b int64) int64 { return a + b },
+		"since":    func(t time.Time) string { return time.Since(t).String() },
+		"add":      func(a, b int64) int64 { return a + b },
+		"contains": func(s, sub string) bool { return strings.Contains(s, sub) },
 		"fmtTime": func(t time.Time) string {
 			if t.IsZero() {
 				return "n/a"
@@ -72,6 +73,14 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 			return t.Local().Format("2006-01-02 15:04:05 MST")
 		},
 		"fmtDur": func(d time.Duration) string { return humanizeDuration(d) },
+		// fmtMs converts milliseconds (float64) into a compact human duration like "6h 27m" or "42s"
+		"fmtMs": func(ms float64) string {
+			if ms <= 0 {
+				return "0s"
+			}
+			d := time.Duration(ms * float64(time.Millisecond))
+			return humanizeDuration(d)
+		},
 		"fmtUptime": func(t time.Time) string {
 			if t.IsZero() {
 				return "n/a"
@@ -196,7 +205,7 @@ const htmlTemplate = `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>pghealth report</title>
+  <title>PostgreSQL Health Check Report</title>
   <style>
     body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin:24px; color:#111827;}
     header{margin-bottom:16px}
@@ -217,7 +226,7 @@ const htmlTemplate = `<!doctype html>
   .muted{color:#6b7280}
   small{font-size:12px;color:#4b5563}
   .table-wrap.collapsed tbody tr:nth-child(n+11){display:none}
-  .table-tools{margin:6px 0 14px;display:flex;justify-content:flex-end;padding:0 12px}
+  .table-tools{margin:12px 0 0;display:flex;justify-content:flex-end;padding:0}
   .hot{background:#fff7ed}
   .toggle-rows{background:#fff;border:1px solid #d1d5db;padding:6px 10px;cursor:pointer}
     .toggle-rows:hover{background:#f9fafb}
@@ -225,12 +234,19 @@ const htmlTemplate = `<!doctype html>
   .query-short{display:block;max-height:4em;overflow:hidden}
   .query-full{display:none}
   .show-full{background:#fff;border:1px solid #d1d5db;padding:2px 6px;margin-top:6px;cursor:pointer}
+  .nowrap{white-space:nowrap}
+  /* Plan advice styling */
+  .plan-advice{margin-top:8px;padding:8px;border:1px solid #e5e7eb;background:#f9fafb}
+  .plan-advice h4{margin:0 0 6px;font-size:14px}
+  .plan-advice ul{margin:6px 0 8px 18px}
+  .show-plan{background:#fff;border:1px solid #d1d5db;padding:2px 6px;margin-top:6px;cursor:pointer}
+  .plan-pre{white-space:pre-wrap;max-height:12em;overflow:auto;margin:6px 0 0;background:#f8fafc;border:1px solid #e5e7eb;padding:8px}
   </style>
   </head>
 <body>
   <header>
-    <h1>pghealth report</h1>
-  <div>Version: {{.Meta.Version}} &middot; Started: {{fmtTime .Meta.StartedAt}} &middot; Duration: {{fmtDur .Meta.Duration}}</div>
+    <h1>PostgreSQL Health Check Report</h1>
+  <div>{{if not (contains .Meta.Version "-dirty")}}Version: {{.Meta.Version}} &middot; {{end}}Started: {{fmtTime .Meta.StartedAt}} &middot; Duration: {{fmtDur .Meta.Duration}}</div>
     <div>Server: {{.Res.ConnInfo.Version}} &middot; DB: {{.Res.ConnInfo.CurrentDB}} &middot; User: {{.Res.ConnInfo.CurrentUser}} &middot; SSL: {{.Res.ConnInfo.SSL}}</div>
   </header>
 
@@ -397,12 +413,32 @@ const htmlTemplate = `<!doctype html>
   <h2>Top queries by total time</h2>
   <div class="table-wrap collapsed">
   <table>
-    <thead><tr><th>Calls</th><th>Total time (ms)</th><th>Mean time (ms)</th><th>Query</th></tr></thead>
+    <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByTotalTime}}
-      {{range $i, $q := .Res.Statements.TopByTotalTime}}<tr class="{{if lt $i 3}}hot{{end}}"><td>{{fmtF0 $q.Calls}}</td><td>{{fmtF2 $q.TotalTime}}</td><td>{{fmtF2 $q.MeanTime}}</td><td>
+  {{range $i, $q := .Res.Statements.TopByTotalTime}}<tr class="{{if lt $i 3}}hot{{end}}"><td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>
         <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
         <button class="show-full">Show full</button>
+        {{if $q.Advice}}
+        <div class="plan-advice">
+          {{if $q.Advice.Highlights}}
+            <h4>Plan highlights</h4>
+            <ul>
+              {{range $q.Advice.Highlights}}<li>{{.}}</li>{{end}}
+            </ul>
+          {{end}}
+          {{if $q.Advice.Suggestions}}
+            <h4>Suggestions</h4>
+            <ul>
+              {{range $q.Advice.Suggestions}}<li>{{.}}</li>{{end}}
+            </ul>
+          {{end}}
+          {{if $q.Advice.Plan}}
+            <pre class="plan-pre" style="display:none">{{$q.Advice.Plan}}</pre>
+            <button class="show-plan">Show plan</button>
+          {{end}}
+        </div>
+        {{end}}
       </td></tr>{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
@@ -410,41 +446,15 @@ const htmlTemplate = `<!doctype html>
     </tbody>
   </table>{{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
-  <h2>Top queries by CPU (approx)</h2>
-  {{if .Res.Statements.TopByCPU}}
-  <div class="table-wrap collapsed">
-  <table>
-    <thead><tr><th>Calls</th><th>CPU time (ms)</th><th>Total time (ms)</th><th>Query</th></tr></thead>
-    <tbody>
-      {{range $i, $q := .Res.Statements.TopByCPU}}<tr class="{{if lt $i 3}}hot{{end}}"><td>{{fmtF0 $q.Calls}}</td><td>{{fmtF2 $q.CPUTime}}</td><td>{{fmtF2 $q.TotalTime}}</td><td>
-        <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
-        <button class="show-full">Show full</button>
-      </td></tr>{{end}}
-    </tbody>
-  </table>{{if gt (len .Res.Statements.TopByCPU) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
-  {{end}}
-
-  <h2>Top queries by IO time</h2>
-  {{if .Res.Statements.TopByIO}}
-  <div class="table-wrap collapsed">
-  <table>
-    <thead><tr><th>Calls</th><th>IO time (ms)</th><th>Read (ms)</th><th>Write (ms)</th><th>Query</th></tr></thead>
-    <tbody>
-      {{range $i, $q := .Res.Statements.TopByIO}}<tr class="{{if lt $i 3}}hot{{end}}"><td>{{fmtF0 $q.Calls}}</td><td>{{fmtF2 $q.IOTime}}</td><td>{{fmtF2 $q.BlkReadTime}}</td><td>{{fmtF2 $q.BlkWriteTime}}</td><td>
-        <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
-        <button class="show-full">Show full</button>
-      </td></tr>{{end}}
-    </tbody>
-  </table>{{if gt (len .Res.Statements.TopByIO) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
-  {{end}}
+  
 
   <h2>Top queries by calls</h2>
   <div class="table-wrap collapsed">
   <table>
-    <thead><tr><th>Calls</th><th>Total time (ms)</th><th>Mean time (ms)</th><th>Query</th></tr></thead>
+    <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByCalls}}
-      {{range $i, $q := .Res.Statements.TopByCalls}}<tr class="{{if lt $i 3}}hot{{end}}"><td>{{fmtF0 $q.Calls}}</td><td>{{fmtF2 $q.TotalTime}}</td><td>{{fmtF2 $q.MeanTime}}</td><td>
+  {{range $i, $q := .Res.Statements.TopByCalls}}<tr class="{{if lt $i 3}}hot{{end}}"><td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>
         <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
         <button class="show-full">Show full</button>
       </td></tr>{{end}}
@@ -517,6 +527,15 @@ const htmlTemplate = `<!doctype html>
         fullEl.style.display = expanded ? 'none' : 'block';
         shortEl.style.display = expanded ? 'block' : 'none';
         e.target.textContent = expanded ? 'Show full' : 'Show less';
+      }
+      if(e.target && e.target.classList.contains('show-plan')){
+        var card = e.target.closest('.plan-advice');
+        if(!card) return;
+        var pre = card.querySelector('.plan-pre');
+        if(!pre) return;
+        var expanded = pre.style.display === 'block';
+        pre.style.display = expanded ? 'none' : 'block';
+        e.target.textContent = expanded ? 'Show plan' : 'Hide plan';
       }
     });
   })();
