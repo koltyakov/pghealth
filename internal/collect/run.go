@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -78,9 +79,10 @@ type IndexStat struct {
 }
 
 type IndexUnused struct {
-	Schema string
-	Table  string
-	Name   string
+	Schema    string
+	Table     string
+	Name      string
+	SizeBytes int64
 }
 
 type MissingIndexHint struct {
@@ -95,16 +97,19 @@ type Statements struct {
 	TopByTotalTime []Statement
 	TopByCPU       []Statement
 	TopByCalls     []Statement
+	TopByIO        []Statement
 }
 
 type Statement struct {
-	Query              string
-	Calls              float64
-	TotalTime          float64
-	MeanTime           float64
-	Rows               float64
-	SharedBlkReadTime  float64
-	SharedBlkWriteTime float64
+	Query        string
+	Calls        float64
+	TotalTime    float64
+	MeanTime     float64
+	Rows         float64
+	BlkReadTime  float64
+	BlkWriteTime float64
+	CPUTime      float64 // approx: total - read - write
+	IOTime       float64 // read + write
 }
 
 func Run(ctx context.Context, cfg Config) (Result, error) {
@@ -205,7 +210,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	// unused indexes (idx_scan=0 and size > some threshold)
 	for _, idx := range res.Indexes {
 		if idx.Scans == 0 && idx.SizeBytes > 8*1024*1024 { // >8MB
-			res.IndexUnused = append(res.IndexUnused, IndexUnused{Schema: idx.Schema, Table: idx.Table, Name: idx.Name})
+			res.IndexUnused = append(res.IndexUnused, IndexUnused{Schema: idx.Schema, Table: idx.Table, Name: idx.Name, SizeBytes: idx.SizeBytes})
 		}
 	}
 
@@ -218,41 +223,23 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 
 	// pg_stat_statements if available
 	if res.Extensions.PgStatStatements {
-		// total time
-		rows, _ = conn.Query(ctx, `select query, calls, total_time, mean_time, rows, shared_blks_read_time, shared_blks_write_time
-            from pg_stat_statements order by total_time desc limit 20`)
-		for rows != nil && rows.Next() {
-			var st Statement
-			_ = rows.Scan(&st.Query, &st.Calls, &st.TotalTime, &st.MeanTime, &st.Rows, &st.SharedBlkReadTime, &st.SharedBlkWriteTime)
-			res.Statements.TopByTotalTime = append(res.Statements.TopByTotalTime, st)
+		// Top by total execution time
+		if sts, ok := fetchPSS(ctx, conn, orderByTotal); ok {
+			res.Statements.TopByTotalTime = sts
 		}
-		if rows != nil {
-			rows.Close()
+		// Top by CPU time (approx = total - IO)
+		if sts, ok := fetchPSS(ctx, conn, orderByCPUApprox); ok {
+			res.Statements.TopByCPU = sts
 		}
-
-		// cpu approximation with block times
-		rows, _ = conn.Query(ctx, `select query, calls, total_time, mean_time, rows, shared_blks_read_time, shared_blks_write_time
-            from pg_stat_statements order by (shared_blks_read_time + shared_blks_write_time) desc nulls last limit 20`)
-		for rows != nil && rows.Next() {
-			var st Statement
-			_ = rows.Scan(&st.Query, &st.Calls, &st.TotalTime, &st.MeanTime, &st.Rows, &st.SharedBlkReadTime, &st.SharedBlkWriteTime)
-			res.Statements.TopByCPU = append(res.Statements.TopByCPU, st)
+		// Top by IO time
+		if sts, ok := fetchPSS(ctx, conn, orderByIO); ok {
+			res.Statements.TopByIO = sts
 		}
-		if rows != nil {
-			rows.Close()
+		// Top by calls
+		if sts, ok := fetchPSS(ctx, conn, orderByCalls); ok {
+			res.Statements.TopByCalls = sts
 		}
-
-		rows, _ = conn.Query(ctx, `select query, calls, total_time, mean_time, rows, shared_blks_read_time, shared_blks_write_time
-            from pg_stat_statements order by calls desc limit 20`)
-		for rows != nil && rows.Next() {
-			var st Statement
-			_ = rows.Scan(&st.Query, &st.Calls, &st.TotalTime, &st.MeanTime, &st.Rows, &st.SharedBlkReadTime, &st.SharedBlkWriteTime)
-			res.Statements.TopByCalls = append(res.Statements.TopByCalls, st)
-		}
-		if rows != nil {
-			rows.Close()
-		}
-		res.Statements.Available = true
+		res.Statements.Available = len(res.Statements.TopByTotalTime) > 0 || len(res.Statements.TopByCalls) > 0
 	}
 
 	return res, nil
@@ -263,4 +250,56 @@ func queryRow[T any](ctx context.Context, conn *pgx.Conn, sql string, dst *T) er
 	defer cancel()
 	row := conn.QueryRow(ctx2, sql)
 	return row.Scan(dst)
+}
+
+type pssOrder int
+
+const (
+	orderByTotal pssOrder = iota
+	orderByCPUApprox
+	orderByIO
+	orderByCalls
+)
+
+// fetchPSS tries new (total_exec_time/mean_exec_time) first, then old (total_time/mean_time)
+func fetchPSS(ctx context.Context, conn *pgx.Conn, ord pssOrder) ([]Statement, bool) {
+	if sts, ok := fetchPSSVariant(ctx, conn, "total_exec_time", "mean_exec_time", ord); ok {
+		return sts, true
+	}
+	if sts, ok := fetchPSSVariant(ctx, conn, "total_time", "mean_time", ord); ok {
+		return sts, true
+	}
+	return nil, false
+}
+
+func fetchPSSVariant(ctx context.Context, conn *pgx.Conn, colTotal, colMean string, ord pssOrder) ([]Statement, bool) {
+	orderExpr := ""
+	switch ord {
+	case orderByTotal:
+		orderExpr = colTotal
+	case orderByCPUApprox:
+		orderExpr = fmt.Sprintf("(%s - blk_read_time - blk_write_time)", colTotal)
+	case orderByIO:
+		orderExpr = "(blk_read_time + blk_write_time)"
+	case orderByCalls:
+		orderExpr = "calls"
+	}
+	q := fmt.Sprintf(`select query, calls, %s as total_time, %s as mean_time, rows, blk_read_time, blk_write_time
+		from pg_stat_statements order by %s desc nulls last limit 20`, colTotal, colMean, orderExpr)
+	rows, err := conn.Query(ctx, q)
+	if err != nil {
+		return nil, false
+	}
+	defer rows.Close()
+	var out []Statement
+	for rows.Next() {
+		var st Statement
+		if err := rows.Scan(&st.Query, &st.Calls, &st.TotalTime, &st.MeanTime, &st.Rows, &st.BlkReadTime, &st.BlkWriteTime); err != nil {
+			continue
+		}
+		st.IOTime = st.BlkReadTime + st.BlkWriteTime
+		st.CPUTime = st.TotalTime - st.IOTime
+		out = append(out, st)
+	}
+	return out, true
 }

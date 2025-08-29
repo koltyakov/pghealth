@@ -3,6 +3,7 @@ package report
 import (
 	"html/template"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 
@@ -17,6 +18,20 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	}
 	defer f.Close()
 
+	// Sort numerical metrics descending so greater numbers show on top
+	sort.Slice(res.DBs, func(i, j int) bool { return res.DBs[i].SizeBytes > res.DBs[j].SizeBytes })
+	sort.Slice(res.Activity, func(i, j int) bool {
+		if res.Activity[i].Count == res.Activity[j].Count {
+			if res.Activity[i].Datname == res.Activity[j].Datname {
+				return res.Activity[i].State < res.Activity[j].State
+			}
+			return res.Activity[i].Datname < res.Activity[j].Datname
+		}
+		return res.Activity[i].Count > res.Activity[j].Count
+	})
+	sort.Slice(res.IndexUnused, func(i, j int) bool { return res.IndexUnused[i].SizeBytes > res.IndexUnused[j].SizeBytes })
+	sort.Slice(res.Indexes, func(i, j int) bool { return res.Indexes[i].SizeBytes > res.Indexes[j].SizeBytes })
+
 	tmpl := template.Must(template.New("report").Funcs(template.FuncMap{
 		"since": func(t time.Time) string { return time.Since(t).String() },
 		"fmtBytes": func(b int64) string {
@@ -28,6 +43,9 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 				i++
 			}
 			return template.HTMLEscapeString((func() string { return fmtFloat(f) + " " + units[i] })())
+		},
+		"fmtMB": func(b int64) string {
+			return fmtFloat(float64(b) / 1024.0 / 1024.0)
 		},
 	}).Parse(htmlTemplate))
 	data := struct {
@@ -64,9 +82,9 @@ const htmlTemplate = `<!doctype html>
     .warn{border-left:4px solid #f59e0b}
     .rec{border-left:4px solid #10b981}
     .info{border-left:4px solid #3b82f6}
-    table{border-collapse:collapse;width:100%}
-    th,td{border-bottom:1px solid #eee;padding:6px;text-align:left;vertical-align:top}
-    th{background:#fafafa}
+  table{border-collapse:collapse;width:100%;border:1px solid #ddd;border-radius:6px;overflow:hidden}
+  th,td{border:1px solid #eee;padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#fafafa}
     code{background:#f3f4f6;padding:2px 4px;border-radius:4px}
   </style>
   </head>
@@ -92,32 +110,82 @@ const htmlTemplate = `<!doctype html>
   <h2>Connections</h2>
   <table>
     <tr><th>Database</th><th>State</th><th>Count</th></tr>
-    {{range .Res.Activity}}<tr><td>{{.Datname}}</td><td>{{.State}}</td><td>{{.Count}}</td></tr>{{end}}
+    {{if .Res.Activity}}
+      {{range .Res.Activity}}<tr><td>{{.Datname}}</td><td>{{.State}}</td><td>{{.Count}}</td></tr>{{end}}
+    {{else}}
+      <tr><td colspan="3" style="color:#6b7280">No data</td></tr>
+    {{end}}
   </table>
 
   <h2>Databases</h2>
   <table>
-    <tr><th>Name</th><th>Size</th><th>Tablespace</th><th>Connections</th></tr>
-    {{range .Res.DBs}}<tr><td>{{.Name}}</td><td>{{.SizeBytes}}</td><td>{{.Tablespaces}}</td><td>{{.ConnCount}}</td></tr>{{end}}
+    <tr><th>Name</th><th>Size, Mb</th><th>Tablespace</th><th>Connections</th></tr>
+    {{if .Res.DBs}}
+      {{range .Res.DBs}}<tr><td>{{.Name}}</td><td>{{fmtMB .SizeBytes}}</td><td>{{.Tablespaces}}</td><td>{{.ConnCount}}</td></tr>{{end}}
+    {{else}}
+      <tr><td colspan="4" style="color:#6b7280">No data</td></tr>
+    {{end}}
   </table>
 
   <h2>Settings (subset)</h2>
   <table>
     <tr><th>Name</th><th>Value</th><th>Unit</th><th>Source</th></tr>
-    {{range .Res.Settings}}<tr><td><code>{{.Name}}</code></td><td>{{.Val}}</td><td>{{.Unit}}</td><td>{{.Source}}</td></tr>{{end}}
+    {{if .Res.Settings}}
+      {{range .Res.Settings}}<tr><td><code>{{.Name}}</code></td><td>{{.Val}}</td><td>{{.Unit}}</td><td>{{.Source}}</td></tr>{{end}}
+    {{else}}
+      <tr><td colspan="4" style="color:#6b7280">No data</td></tr>
+    {{end}}
   </table>
 
   <h2>Indexes (unused candidates)</h2>
   <table>
-    <tr><th>Schema</th><th>Table</th><th>Index</th></tr>
-    {{range .Res.IndexUnused}}<tr><td>{{.Schema}}</td><td>{{.Table}}</td><td>{{.Name}}</td></tr>{{end}}
+    <tr><th>Schema</th><th>Table</th><th>Index</th><th>Size, Mb</th></tr>
+    {{if .Res.IndexUnused}}
+      {{range .Res.IndexUnused}}<tr><td>{{.Schema}}</td><td>{{.Table}}</td><td>{{.Name}}</td><td>{{fmtMB .SizeBytes}}</td></tr>{{end}}
+    {{else}}
+      <tr><td colspan="4" style="color:#6b7280">No data</td></tr>
+    {{end}}
   </table>
 
   {{if .Res.Statements.Available}}
   <h2>Top queries by total time</h2>
   <table>
     <tr><th>Calls</th><th>Total time (ms)</th><th>Mean time (ms)</th><th>Query</th></tr>
-    {{range .Res.Statements.TopByTotalTime}}<tr><td>{{printf "%.0f" .Calls}}</td><td>{{printf "%.2f" .TotalTime}}</td><td>{{printf "%.2f" .MeanTime}}</td><td><pre>{{.Query}}</pre></td></tr>{{end}}
+    {{if .Res.Statements.TopByTotalTime}}
+      {{range .Res.Statements.TopByTotalTime}}<tr><td>{{printf "%.0f" .Calls}}</td><td>{{printf "%.2f" .TotalTime}}</td><td>{{printf "%.2f" .MeanTime}}</td><td><pre>{{.Query}}</pre></td></tr>{{end}}
+    {{else}}
+      <tr><td colspan="4" style="color:#6b7280">No data</td></tr>
+    {{end}}
+  </table>
+
+  <h2>Top queries by CPU (approx)</h2>
+  <table>
+    <tr><th>Calls</th><th>CPU time (ms)</th><th>Total time (ms)</th><th>Query</th></tr>
+    {{if .Res.Statements.TopByCPU}}
+      {{range .Res.Statements.TopByCPU}}<tr><td>{{printf "%.0f" .Calls}}</td><td>{{printf "%.2f" .CPUTime}}</td><td>{{printf "%.2f" .TotalTime}}</td><td><pre>{{.Query}}</pre></td></tr>{{end}}
+    {{else}}
+      <tr><td colspan="4" style="color:#6b7280">No data</td></tr>
+    {{end}}
+  </table>
+
+  <h2>Top queries by IO time</h2>
+  <table>
+    <tr><th>Calls</th><th>IO time (ms)</th><th>Read (ms)</th><th>Write (ms)</th><th>Query</th></tr>
+    {{if .Res.Statements.TopByIO}}
+      {{range .Res.Statements.TopByIO}}<tr><td>{{printf "%.0f" .Calls}}</td><td>{{printf "%.2f" .IOTime}}</td><td>{{printf "%.2f" .BlkReadTime}}</td><td>{{printf "%.2f" .BlkWriteTime}}</td><td><pre>{{.Query}}</pre></td></tr>{{end}}
+    {{else}}
+      <tr><td colspan="5" style="color:#6b7280">No data</td></tr>
+    {{end}}
+  </table>
+
+  <h2>Top queries by calls</h2>
+  <table>
+    <tr><th>Calls</th><th>Total time (ms)</th><th>Mean time (ms)</th><th>Query</th></tr>
+    {{if .Res.Statements.TopByCalls}}
+      {{range .Res.Statements.TopByCalls}}<tr><td>{{printf "%.0f" .Calls}}</td><td>{{printf "%.2f" .TotalTime}}</td><td>{{printf "%.2f" .MeanTime}}</td><td><pre>{{.Query}}</pre></td></tr>{{end}}
+    {{else}}
+      <tr><td colspan="4" style="color:#6b7280">No data</td></tr>
+    {{end}}
   </table>
   {{else}}
   <p>pg_stat_statements not available. Install it for detailed query insights.</p>
