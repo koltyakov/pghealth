@@ -260,6 +260,30 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
+	// Fallback: if no rows (permissions or empty stats), derive from pg_class/pg_namespace
+	if len(res.Tables) == 0 {
+		if rows, err := conn.Query(ctx, `select n.nspname as schemaname,
+				c.relname,
+				0::bigint as seq_scan,
+				0::bigint as idx_scan,
+				coalesce(c.reltuples::bigint, 0) as n_live_tup,
+				0::bigint as n_dead_tup,
+				pg_total_relation_size(c.oid) as size_bytes
+			from pg_class c
+			join pg_namespace n on n.oid = c.relnamespace
+			where c.relkind in ('r','m','p')
+			  and n.nspname not in ('pg_catalog','information_schema')
+			order by size_bytes desc
+			limit 1000`); err == nil {
+			for rows.Next() {
+				var t TableStat
+				_ = rows.Scan(&t.Schema, &t.Name, &t.SeqScans, &t.IdxScans, &t.NLiveTup, &t.NDeadTup, &t.SizeBytes)
+				res.Tables = append(res.Tables, t)
+			}
+			rows.Close()
+		}
+	}
+
 	// index stats and size
 	rows, err = conn.Query(ctx, `select s.schemaname, s.relname, s.indexrelname, s.idx_scan, pg_relation_size(format('%I.%I', s.schemaname, s.indexrelname))
         from pg_stat_all_indexes s`)
