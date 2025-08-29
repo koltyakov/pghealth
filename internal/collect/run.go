@@ -112,18 +112,32 @@ type Statements struct {
 	TopByCPU       []Statement
 	TopByCalls     []Statement
 	TopByIO        []Statement
+	TopByIOBlocks  []Statement
 }
 
 type Statement struct {
-	Query        string
-	Calls        float64
-	TotalTime    float64
-	MeanTime     float64
-	Rows         float64
-	BlkReadTime  float64
-	BlkWriteTime float64
-	CPUTime      float64 // approx: total - read - write
-	IOTime       float64 // read + write
+	Query           string
+	Calls           float64
+	TotalTime       float64
+	MeanTime        float64
+	Rows            float64
+	BlkReadTime     float64
+	BlkWriteTime    float64
+	CPUTime         float64 // approx: total - read - write
+	IOTime          float64 // read + write
+	SharedBlksRead  float64
+	SharedBlksWrite float64
+	LocalBlksRead   float64
+	LocalBlksWrite  float64
+	TempBlksRead    float64
+	TempBlksWrite   float64
+}
+
+// Hints for slow queries based on EXPLAIN
+type QueryPlanHint struct {
+	Query         string
+	SeqScanTables []string
+	Plan          string
 }
 
 // Healthcheck types
@@ -313,27 +327,86 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	// pg_stat_statements if available
 	if res.Extensions.PgStatStatements {
 		hasIO := hasPSSIOCols(ctx, conn, res.Extensions.PgStatStatementsSchema)
+		hasBlk := hasPSSBlockCols(ctx, conn, res.Extensions.PgStatStatementsSchema)
 		// Top by total execution time
-		if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByTotal, hasIO); ok {
+		if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByTotal, hasIO, hasBlk); ok {
 			res.Statements.TopByTotalTime = sts
 		}
 		// Top by CPU time (approx = total - IO)
 		if hasIO {
-			if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByCPUApprox, hasIO); ok {
+			if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByCPUApprox, hasIO, hasBlk); ok {
 				res.Statements.TopByCPU = sts
 			}
 		}
 		// Top by IO time
 		if hasIO {
-			if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByIO, hasIO); ok {
+			if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByIO, hasIO, hasBlk); ok {
 				res.Statements.TopByIO = sts
 			}
 		}
+		// Alternative IO ranking by block counts if IO time not available
+		if !hasIO && hasBlk {
+			if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByIOBlocks, false, hasBlk); ok {
+				res.Statements.TopByIOBlocks = sts
+			}
+		}
 		// Top by calls
-		if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByCalls, hasIO); ok {
+		if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByCalls, hasIO, hasBlk); ok {
 			res.Statements.TopByCalls = sts
 		}
 		res.Statements.Available = len(res.Statements.TopByTotalTime) > 0 || len(res.Statements.TopByCalls) > 0
+	}
+
+	// Best-effort EXPLAIN plan hints for top slow queries (safe subset only)
+	if len(res.Statements.TopByTotalTime) > 0 {
+		limit := 5
+		if len(res.Statements.TopByTotalTime) < limit {
+			limit = len(res.Statements.TopByTotalTime)
+		}
+		for i := 0; i < limit; i++ {
+			q := res.Statements.TopByTotalTime[i].Query
+			qUp := strings.ToUpper(strings.TrimSpace(q))
+			if !strings.HasPrefix(qUp, "SELECT") {
+				continue
+			}
+			if strings.Contains(q, "$1") || strings.Contains(q, "$2") || strings.Contains(q, "$") {
+				continue
+			}
+			// Run EXPLAIN safely with short timeout
+			ctxPlan, cancel := context.WithTimeout(ctx, 2*time.Second)
+			planRows, err := conn.Query(ctxPlan, "EXPLAIN "+q)
+			cancel()
+			if err != nil {
+				continue
+			}
+			var seqOn []string
+			for planRows.Next() {
+				var line string
+				_ = planRows.Scan(&line)
+				// Detect Seq Scan on table
+				up := strings.ToUpper(line)
+				if strings.Contains(up, "SEQ SCAN ON ") {
+					// extract table name after 'on '
+					idx := strings.Index(up, "SEQ SCAN ON ")
+					if idx >= 0 {
+						rest := strings.TrimSpace(line[idx+len("SEQ SCAN ON "):])
+						// take up to first space or '(' character
+						name := rest
+						if j := strings.IndexAny(rest, " (\t"); j >= 0 {
+							name = rest[:j]
+						}
+						seqOn = append(seqOn, name)
+					}
+				}
+			}
+			planRows.Close()
+			if len(seqOn) > 0 {
+				// append hint as an info in res.Errors for now? Better: leave to report via plan hints field; adding to Result would require public change; we can reuse Errors but better add field
+				// Skipping adding to result if types are immutable
+				// For minimal change, append a textual hint to Errors bucket
+				res.Errors = append(res.Errors, fmt.Sprintf("Seq Scan detected in slow query on: %s", strings.Join(seqOn, ", ")))
+			}
+		}
 	}
 
 	// Healthchecks collection
@@ -514,20 +587,21 @@ const (
 	orderByCPUApprox
 	orderByIO
 	orderByCalls
+	orderByIOBlocks
 )
 
 // fetchPSS tries new (total_exec_time/mean_exec_time) first, then old (total_time/mean_time)
-func fetchPSS(ctx context.Context, conn *pgx.Conn, schema string, ord pssOrder, includeIO bool) ([]Statement, bool) {
-	if sts, ok := fetchPSSVariant(ctx, conn, schema, "total_exec_time", "mean_exec_time", ord, includeIO); ok {
+func fetchPSS(ctx context.Context, conn *pgx.Conn, schema string, ord pssOrder, includeIO bool, includeBlk bool) ([]Statement, bool) {
+	if sts, ok := fetchPSSVariant(ctx, conn, schema, "total_exec_time", "mean_exec_time", ord, includeIO, includeBlk); ok {
 		return sts, true
 	}
-	if sts, ok := fetchPSSVariant(ctx, conn, schema, "total_time", "mean_time", ord, includeIO); ok {
+	if sts, ok := fetchPSSVariant(ctx, conn, schema, "total_time", "mean_time", ord, includeIO, includeBlk); ok {
 		return sts, true
 	}
 	return nil, false
 }
 
-func fetchPSSVariant(ctx context.Context, conn *pgx.Conn, schema, colTotal, colMean string, ord pssOrder, includeIO bool) ([]Statement, bool) {
+func fetchPSSVariant(ctx context.Context, conn *pgx.Conn, schema, colTotal, colMean string, ord pssOrder, includeIO bool, includeBlk bool) ([]Statement, bool) {
 	orderExpr := ""
 	switch ord {
 	case orderByTotal:
@@ -546,13 +620,23 @@ func fetchPSSVariant(ctx context.Context, conn *pgx.Conn, schema, colTotal, colM
 		}
 	case orderByCalls:
 		orderExpr = "calls"
+	case orderByIOBlocks:
+		if includeBlk {
+			orderExpr = "(coalesce(shared_blks_read,0)+coalesce(shared_blks_written,0)+coalesce(local_blks_read,0)+coalesce(local_blks_written,0)+coalesce(temp_blks_read,0)+coalesce(temp_blks_written,0))"
+		} else {
+			orderExpr = colTotal
+		}
 	}
 	fromRel := qualifiedPSS(schema)
 	selectIO := ""
 	if includeIO {
 		selectIO = ", blk_read_time, blk_write_time"
 	}
-	q := fmt.Sprintf(`select query, calls, %s as total_time, %s as mean_time, rows%s from %s order by %s desc nulls last limit 20`, colTotal, colMean, selectIO, fromRel, orderExpr)
+	selectBlk := ""
+	if includeBlk {
+		selectBlk = ", shared_blks_read, shared_blks_written, local_blks_read, local_blks_written, temp_blks_read, temp_blks_written"
+	}
+	q := fmt.Sprintf(`select query, calls, %s as total_time, %s as mean_time, rows%s%s from %s order by %s desc nulls last limit 20`, colTotal, colMean, selectIO, selectBlk, fromRel, orderExpr)
 	rows, err := conn.Query(ctx, q)
 	if err != nil {
 		return nil, false
@@ -561,16 +645,21 @@ func fetchPSSVariant(ctx context.Context, conn *pgx.Conn, schema, colTotal, colM
 	var out []Statement
 	for rows.Next() {
 		var st Statement
+		// Build scan targets dynamically based on selected columns
+		scanArgs := []any{&st.Query, &st.Calls, &st.TotalTime, &st.MeanTime, &st.Rows}
 		if includeIO {
-			if err := rows.Scan(&st.Query, &st.Calls, &st.TotalTime, &st.MeanTime, &st.Rows, &st.BlkReadTime, &st.BlkWriteTime); err != nil {
-				continue
-			}
+			scanArgs = append(scanArgs, &st.BlkReadTime, &st.BlkWriteTime)
+		}
+		if includeBlk {
+			scanArgs = append(scanArgs, &st.SharedBlksRead, &st.SharedBlksWrite, &st.LocalBlksRead, &st.LocalBlksWrite, &st.TempBlksRead, &st.TempBlksWrite)
+		}
+		if err := rows.Scan(scanArgs...); err != nil {
+			continue
+		}
+		if includeIO {
 			st.IOTime = st.BlkReadTime + st.BlkWriteTime
 			st.CPUTime = st.TotalTime - st.IOTime
 		} else {
-			if err := rows.Scan(&st.Query, &st.Calls, &st.TotalTime, &st.MeanTime, &st.Rows); err != nil {
-				continue
-			}
 			st.IOTime = 0
 			st.CPUTime = st.TotalTime
 		}
@@ -627,6 +716,26 @@ func hasPSSIOCols(ctx context.Context, conn *pgx.Conn, schema string) bool {
 	ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	row := conn.QueryRow(ctx2, q, schema)
+	_ = row.Scan(&has)
+	return has
+}
+
+func hasPSSBlockCols(ctx context.Context, conn *pgx.Conn, schema string) bool {
+	// Check for block counters columns presence
+	var has bool
+	if schema == "" {
+		_ = queryRow(ctx, conn, `select exists(
+			select 1 from information_schema.columns
+			where table_name='pg_stat_statements' and column_name in ('shared_blks_read','shared_blks_written','local_blks_read','local_blks_written','temp_blks_read','temp_blks_written')
+			group by table_name having count(*)=6)`, &has)
+		return has
+	}
+	ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	row := conn.QueryRow(ctx2, `select exists(
+		select 1 from information_schema.columns
+		where table_schema=$1 and table_name='pg_stat_statements' and column_name in ('shared_blks_read','shared_blks_written','local_blks_read','local_blks_written','temp_blks_read','temp_blks_written')
+		group by table_schema, table_name having count(*)=6)`, schema)
 	_ = row.Scan(&has)
 	return has
 }

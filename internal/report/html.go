@@ -207,7 +207,7 @@ const htmlTemplate = `<!doctype html>
     .warn{border-left:4px solid #f59e0b}
     .rec{border-left:4px solid #10b981}
     .info{border-left:4px solid #3b82f6}
-  .table-wrap{margin:8px 0; border:1px solid #9ca3af; overflow:hidden}
+  .table-wrap{margin:8px 0; overflow:hidden}
   table{border-collapse:collapse;border-spacing:0;width:100%}
   th,td{border:1px solid #9ca3af;padding:10px 12px;text-align:left;vertical-align:top}
   thead th{background:#f3f4f6;font-weight:600;border-bottom:2px solid #9ca3af}
@@ -218,6 +218,7 @@ const htmlTemplate = `<!doctype html>
   small{font-size:12px;color:#4b5563}
   .table-wrap.collapsed tbody tr:nth-child(n+11){display:none}
   .table-tools{margin:6px 0 14px;display:flex;justify-content:flex-end;padding:0 12px}
+  .hot{background:#fff7ed}
   .toggle-rows{background:#fff;border:1px solid #d1d5db;padding:6px 10px;cursor:pointer}
     .toggle-rows:hover{background:#f9fafb}
   pre{white-space:pre-wrap;max-height:8em;overflow:auto;margin:0;background:#f8fafc;border:1px solid #e5e7eb;padding:8px}
@@ -247,7 +248,6 @@ const htmlTemplate = `<!doctype html>
 
   <h2>Connections</h2>
   <div class="table-wrap collapsed">
-  {{if gt (len .Activity) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>Database</th><th>State</th><th>Count</th></tr></thead>
     <tbody>
@@ -258,11 +258,11 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Activity) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Databases</h2>
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>Name</th><th>Size, Mb</th><th>Tablespace</th><th>Connections</th></tr></thead>
     <tbody>
@@ -273,11 +273,11 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Top tables by rows</h2>
   <div class="table-wrap collapsed">
-  {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>Schema</th><th>Table</th><th>Rows</th></tr></thead>
     <tbody>
@@ -288,11 +288,11 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Top tables by size</h2>
   <div class="table-wrap collapsed">
-  {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>Schema</th><th>Table</th><th>Size, Mb</th></tr></thead>
     <tbody>
@@ -303,11 +303,11 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Settings (subset)</h2>
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>Name</th><th>Value</th><th>Unit</th><th>Source</th></tr></thead>
     <tbody>
@@ -318,11 +318,11 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Indexes (unused candidates)</h2>
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>Schema</th><th>Table</th><th>Index</th><th>Size, Mb</th></tr></thead>
     <tbody>
@@ -333,11 +333,11 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Tables with lowest index usage</h2>
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>Schema</th><th>Table</th><th>Index usage (%)</th><th>Rows</th></tr></thead>
     <tbody>
@@ -348,6 +348,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   
@@ -355,7 +356,6 @@ const htmlTemplate = `<!doctype html>
   <h3>Cache hit ratio by database</h3>
   <p class="muted">Interpretation: closer to 100% is better. Values above ~99% are typical for OLTP workloads. Lower ratios indicate more disk reads; consider increasing shared_buffers, reviewing working set size, and improving indexing and query plans.</p>
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>Database</th><th>blks_hit</th><th>blks_read</th><th>Hit ratio (%)</th></tr></thead>
     <tbody>
@@ -371,11 +371,11 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h3>Connections by client</h3>
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr>{{if .ShowHostname}}<th>Hostname</th>{{end}}<th>Address</th><th>User</th><th>Application</th><th>Connections</th></tr></thead>
     <tbody>
@@ -390,79 +390,75 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   {{if .Res.Extensions.PgStatStatements}}
   <h2>Top queries by total time</h2>
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>Calls</th><th>Total time (ms)</th><th>Mean time (ms)</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByTotalTime}}
-      {{range .Res.Statements.TopByTotalTime}}<tr><td>{{fmtF0 .Calls}}</td><td>{{fmtF2 .TotalTime}}</td><td>{{fmtF2 .MeanTime}}</td><td>
-        <pre class="query"><span class="query-short">{{.Query}}</span><span class="query-full">{{.Query}}</span></pre>
+      {{range $i, $q := .Res.Statements.TopByTotalTime}}<tr class="{{if lt $i 3}}hot{{end}}"><td>{{fmtF0 $q.Calls}}</td><td>{{fmtF2 $q.TotalTime}}</td><td>{{fmtF2 $q.MeanTime}}</td><td>
+        <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
         <button class="show-full">Show full</button>
       </td></tr>{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
     </tbody>
-  </table></div>
+  </table>{{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <h2>Top queries by CPU (approx)</h2>
   {{if .Res.Statements.TopByCPU}}
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.Statements.TopByCPU) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>Calls</th><th>CPU time (ms)</th><th>Total time (ms)</th><th>Query</th></tr></thead>
     <tbody>
-      {{range .Res.Statements.TopByCPU}}<tr><td>{{fmtF0 .Calls}}</td><td>{{fmtF2 .CPUTime}}</td><td>{{fmtF2 .TotalTime}}</td><td>
-        <pre class="query"><span class="query-short">{{.Query}}</span><span class="query-full">{{.Query}}</span></pre>
+      {{range $i, $q := .Res.Statements.TopByCPU}}<tr class="{{if lt $i 3}}hot{{end}}"><td>{{fmtF0 $q.Calls}}</td><td>{{fmtF2 $q.CPUTime}}</td><td>{{fmtF2 $q.TotalTime}}</td><td>
+        <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
         <button class="show-full">Show full</button>
       </td></tr>{{end}}
     </tbody>
-  </table></div>
+  </table>{{if gt (len .Res.Statements.TopByCPU) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
   {{end}}
 
   <h2>Top queries by IO time</h2>
   {{if .Res.Statements.TopByIO}}
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.Statements.TopByIO) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>Calls</th><th>IO time (ms)</th><th>Read (ms)</th><th>Write (ms)</th><th>Query</th></tr></thead>
     <tbody>
-      {{range .Res.Statements.TopByIO}}<tr><td>{{fmtF0 .Calls}}</td><td>{{fmtF2 .IOTime}}</td><td>{{fmtF2 .BlkReadTime}}</td><td>{{fmtF2 .BlkWriteTime}}</td><td>
-        <pre class="query"><span class="query-short">{{.Query}}</span><span class="query-full">{{.Query}}</span></pre>
+      {{range $i, $q := .Res.Statements.TopByIO}}<tr class="{{if lt $i 3}}hot{{end}}"><td>{{fmtF0 $q.Calls}}</td><td>{{fmtF2 $q.IOTime}}</td><td>{{fmtF2 $q.BlkReadTime}}</td><td>{{fmtF2 $q.BlkWriteTime}}</td><td>
+        <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
         <button class="show-full">Show full</button>
       </td></tr>{{end}}
     </tbody>
-  </table></div>
+  </table>{{if gt (len .Res.Statements.TopByIO) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
   {{end}}
 
   <h2>Top queries by calls</h2>
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>Calls</th><th>Total time (ms)</th><th>Mean time (ms)</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByCalls}}
-      {{range .Res.Statements.TopByCalls}}<tr><td>{{fmtF0 .Calls}}</td><td>{{fmtF2 .TotalTime}}</td><td>{{fmtF2 .MeanTime}}</td><td>
-        <pre class="query"><span class="query-short">{{.Query}}</span><span class="query-full">{{.Query}}</span></pre>
+      {{range $i, $q := .Res.Statements.TopByCalls}}<tr class="{{if lt $i 3}}hot{{end}}"><td>{{fmtF0 $q.Calls}}</td><td>{{fmtF2 $q.TotalTime}}</td><td>{{fmtF2 $q.MeanTime}}</td><td>
+        <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
         <button class="show-full">Show full</button>
       </td></tr>{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
     </tbody>
-  </table></div>
+  </table>{{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
   {{else}}
   <p>pg_stat_statements is not enabled in this database. Install and preload it for detailed query insights.</p>
   {{end}}
 
   <h2>Blocking queries</h2>
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>DB</th><th>Blocked PID</th><th>Blocked for</th><th>Blocking PID</th><th>Blocking for</th><th>Blocked query</th><th>Blocking query</th></tr></thead>
     <tbody>
@@ -472,11 +468,10 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="7" class="muted">No blocking detected</td></tr>
     {{end}}
     </tbody>
-  </table></div>
+  </table>{{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <h2>Long running queries (> 5m)</h2>
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>DB</th><th>PID</th><th>Duration</th><th>State</th><th>Query</th></tr></thead>
     <tbody>
@@ -486,11 +481,10 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="5" class="muted">No long running queries</td></tr>
     {{end}}
     </tbody>
-  </table></div>
+  </table>{{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <h2>Autovacuum activities</h2>
   <div class="table-wrap collapsed">
-  {{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   <table>
     <thead><tr><th>DB</th><th>PID</th><th>Relation</th><th>Phase</th><th>Scanned</th><th>Total</th></tr></thead>
     <tbody>
@@ -500,7 +494,7 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="6" class="muted">No autovacuum workers</td></tr>
     {{end}}
     </tbody>
-  </table></div>
+  </table>{{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
