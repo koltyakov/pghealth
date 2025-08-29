@@ -44,7 +44,8 @@ type ConnInfo struct {
 }
 
 type Extensions struct {
-	PgStatStatements bool
+	PgStatStatements       bool
+	PgStatStatementsSchema string
 }
 
 type Roles struct {
@@ -72,13 +73,14 @@ type Setting struct {
 }
 
 type TableStat struct {
-	Schema   string
-	Name     string
-	SeqScans int64
-	IdxScans int64
-	NLiveTup int64
-	NDeadTup int64
-	BloatPct float64 // heuristic
+	Schema    string
+	Name      string
+	SeqScans  int64
+	IdxScans  int64
+	NLiveTup  int64
+	NDeadTup  int64
+	SizeBytes int64
+	BloatPct  float64 // heuristic
 }
 
 type IndexStat struct {
@@ -195,8 +197,11 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	_ = queryRow(ctx, conn, `select exists(select 1 from pg_auth_members m join pg_roles r on r.oid=m.roleid where r.rolname='pg_monitor' and m.member=(select oid from pg_roles where rolname=current_user))`, &hasMonitor)
 	res.Roles.HasPgMonitor = hasMonitor
 
-	// extensions - robust detection
+	// extensions - robust detection and schema resolution
 	res.Extensions.PgStatStatements = hasPgStatStatements(ctx, conn)
+	if res.Extensions.PgStatStatements {
+		res.Extensions.PgStatStatementsSchema = findPgStatStatementsSchema(ctx, conn)
+	}
 
 	// activity counts by state
 	rows, err := conn.Query(ctx, `select datname, coalesce(state,'unknown') as state, count(*) from pg_stat_activity group by 1,2 order by 1,2`)
@@ -237,12 +242,14 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// table stats (requires pg_stat_all_tables)
-	rows, err = conn.Query(ctx, `select schemaname, relname, seq_scan, idx_scan, n_live_tup, n_dead_tup from pg_stat_all_tables`)
+	// table stats (requires pg_stat_all_tables) with table size
+	rows, err = conn.Query(ctx, `select schemaname, relname, seq_scan, idx_scan, n_live_tup, n_dead_tup,
+		pg_total_relation_size(format('%I.%I', schemaname, relname)) as size_bytes
+		from pg_stat_all_tables`)
 	if err == nil {
 		for rows.Next() {
 			var t TableStat
-			_ = rows.Scan(&t.Schema, &t.Name, &t.SeqScans, &t.IdxScans, &t.NLiveTup, &t.NDeadTup)
+			_ = rows.Scan(&t.Schema, &t.Name, &t.SeqScans, &t.IdxScans, &t.NLiveTup, &t.NDeadTup, &t.SizeBytes)
 			// rough bloat heuristic
 			if t.NLiveTup > 0 {
 				t.BloatPct = float64(t.NDeadTup) / float64(t.NLiveTup+t.NDeadTup) * 100
@@ -280,20 +287,25 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 
 	// pg_stat_statements if available
 	if res.Extensions.PgStatStatements {
+		hasIO := hasPSSIOCols(ctx, conn, res.Extensions.PgStatStatementsSchema)
 		// Top by total execution time
-		if sts, ok := fetchPSS(ctx, conn, orderByTotal); ok {
+		if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByTotal, hasIO); ok {
 			res.Statements.TopByTotalTime = sts
 		}
 		// Top by CPU time (approx = total - IO)
-		if sts, ok := fetchPSS(ctx, conn, orderByCPUApprox); ok {
-			res.Statements.TopByCPU = sts
+		if hasIO {
+			if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByCPUApprox, hasIO); ok {
+				res.Statements.TopByCPU = sts
+			}
 		}
 		// Top by IO time
-		if sts, ok := fetchPSS(ctx, conn, orderByIO); ok {
-			res.Statements.TopByIO = sts
+		if hasIO {
+			if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByIO, hasIO); ok {
+				res.Statements.TopByIO = sts
+			}
 		}
 		// Top by calls
-		if sts, ok := fetchPSS(ctx, conn, orderByCalls); ok {
+		if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByCalls, hasIO); ok {
 			res.Statements.TopByCalls = sts
 		}
 		res.Statements.Available = len(res.Statements.TopByTotalTime) > 0 || len(res.Statements.TopByCalls) > 0
@@ -480,30 +492,42 @@ const (
 )
 
 // fetchPSS tries new (total_exec_time/mean_exec_time) first, then old (total_time/mean_time)
-func fetchPSS(ctx context.Context, conn *pgx.Conn, ord pssOrder) ([]Statement, bool) {
-	if sts, ok := fetchPSSVariant(ctx, conn, "total_exec_time", "mean_exec_time", ord); ok {
+func fetchPSS(ctx context.Context, conn *pgx.Conn, schema string, ord pssOrder, includeIO bool) ([]Statement, bool) {
+	if sts, ok := fetchPSSVariant(ctx, conn, schema, "total_exec_time", "mean_exec_time", ord, includeIO); ok {
 		return sts, true
 	}
-	if sts, ok := fetchPSSVariant(ctx, conn, "total_time", "mean_time", ord); ok {
+	if sts, ok := fetchPSSVariant(ctx, conn, schema, "total_time", "mean_time", ord, includeIO); ok {
 		return sts, true
 	}
 	return nil, false
 }
 
-func fetchPSSVariant(ctx context.Context, conn *pgx.Conn, colTotal, colMean string, ord pssOrder) ([]Statement, bool) {
+func fetchPSSVariant(ctx context.Context, conn *pgx.Conn, schema, colTotal, colMean string, ord pssOrder, includeIO bool) ([]Statement, bool) {
 	orderExpr := ""
 	switch ord {
 	case orderByTotal:
 		orderExpr = colTotal
 	case orderByCPUApprox:
-		orderExpr = fmt.Sprintf("(%s - blk_read_time - blk_write_time)", colTotal)
+		if includeIO {
+			orderExpr = fmt.Sprintf("(%s - blk_read_time - blk_write_time)", colTotal)
+		} else {
+			orderExpr = colTotal
+		}
 	case orderByIO:
-		orderExpr = "(blk_read_time + blk_write_time)"
+		if includeIO {
+			orderExpr = "(blk_read_time + blk_write_time)"
+		} else {
+			orderExpr = colTotal
+		}
 	case orderByCalls:
 		orderExpr = "calls"
 	}
-	q := fmt.Sprintf(`select query, calls, %s as total_time, %s as mean_time, rows, blk_read_time, blk_write_time
-		from pg_stat_statements order by %s desc nulls last limit 20`, colTotal, colMean, orderExpr)
+	fromRel := qualifiedPSS(schema)
+	selectIO := ""
+	if includeIO {
+		selectIO = ", blk_read_time, blk_write_time"
+	}
+	q := fmt.Sprintf(`select query, calls, %s as total_time, %s as mean_time, rows%s from %s order by %s desc nulls last limit 20`, colTotal, colMean, selectIO, fromRel, orderExpr)
 	rows, err := conn.Query(ctx, q)
 	if err != nil {
 		return nil, false
@@ -512,12 +536,67 @@ func fetchPSSVariant(ctx context.Context, conn *pgx.Conn, colTotal, colMean stri
 	var out []Statement
 	for rows.Next() {
 		var st Statement
-		if err := rows.Scan(&st.Query, &st.Calls, &st.TotalTime, &st.MeanTime, &st.Rows, &st.BlkReadTime, &st.BlkWriteTime); err != nil {
-			continue
+		if includeIO {
+			if err := rows.Scan(&st.Query, &st.Calls, &st.TotalTime, &st.MeanTime, &st.Rows, &st.BlkReadTime, &st.BlkWriteTime); err != nil {
+				continue
+			}
+			st.IOTime = st.BlkReadTime + st.BlkWriteTime
+			st.CPUTime = st.TotalTime - st.IOTime
+		} else {
+			if err := rows.Scan(&st.Query, &st.Calls, &st.TotalTime, &st.MeanTime, &st.Rows); err != nil {
+				continue
+			}
+			st.IOTime = 0
+			st.CPUTime = st.TotalTime
 		}
-		st.IOTime = st.BlkReadTime + st.BlkWriteTime
-		st.CPUTime = st.TotalTime - st.IOTime
 		out = append(out, st)
 	}
 	return out, true
+}
+
+func qualifiedPSS(schema string) string {
+	if schema == "" {
+		return "pg_stat_statements"
+	}
+	return quoteIdent(schema) + ".pg_stat_statements"
+}
+
+func quoteIdent(s string) string {
+	out := `"`
+	for i := 0; i < len(s); i++ {
+		if s[i] == '"' {
+			out += "\"" // double quotes
+		}
+		out += string(s[i])
+	}
+	out += `"`
+	return out
+}
+
+func findPgStatStatementsSchema(ctx context.Context, conn *pgx.Conn) string {
+	var schema string
+	_ = queryRow(ctx, conn, `select n.nspname from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relname='pg_stat_statements' limit 1`, &schema)
+	return schema
+}
+
+func hasPSSIOCols(ctx context.Context, conn *pgx.Conn, schema string) bool {
+	// Check whether blk_read_time and blk_write_time exist in the view
+	var has bool
+	if schema == "" {
+		_ = queryRow(ctx, conn, `select exists(
+			select 1 from information_schema.columns
+			where table_name='pg_stat_statements' and column_name in ('blk_read_time','blk_write_time')
+			group by table_name having count(*)=2)`, &has)
+		return has
+	}
+	// schema-qualified check
+	q := `select exists(
+			select 1 from information_schema.columns
+			where table_schema=$1 and table_name='pg_stat_statements' and column_name in ('blk_read_time','blk_write_time')
+			group by table_schema, table_name having count(*)=2)`
+	ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	row := conn.QueryRow(ctx2, q, schema)
+	_ = row.Scan(&has)
+	return has
 }

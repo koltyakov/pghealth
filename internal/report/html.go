@@ -31,6 +31,7 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	})
 	sort.Slice(res.IndexUnused, func(i, j int) bool { return res.IndexUnused[i].SizeBytes > res.IndexUnused[j].SizeBytes })
 	sort.Slice(res.Indexes, func(i, j int) bool { return res.Indexes[i].SizeBytes > res.Indexes[j].SizeBytes })
+	sort.Slice(res.Tables, func(i, j int) bool { return res.Tables[i].SizeBytes > res.Tables[j].SizeBytes })
 
 	// Precompute whether any client has a hostname to show
 	showHostname := false
@@ -141,14 +142,15 @@ const htmlTemplate = `<!doctype html>
     .warn{border-left:4px solid #f59e0b}
     .rec{border-left:4px solid #10b981}
     .info{border-left:4px solid #3b82f6}
-  table{border-collapse:separate;border-spacing:0;width:100%;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
-  th,td{border:1px solid #e5e7eb;padding:10px 12px;text-align:left;vertical-align:top}
-  thead th{background:#f9fafb;font-weight:600}
+  .table-wrap{margin:8px 0; border:1px solid #9ca3af; border-radius:8px; overflow:hidden}
+  table{border-collapse:collapse;border-spacing:0;width:100%}
+  th,td{border:1px solid #9ca3af;padding:10px 12px;text-align:left;vertical-align:top}
+  thead th{background:#f3f4f6;font-weight:600;border-bottom:2px solid #9ca3af}
   tbody tr:nth-child(even){background:#fcfcfd}
   tbody tr:hover{background:#f8fafc}
     code{background:#f3f4f6;padding:2px 4px;border-radius:4px}
-    .muted{color:#6b7280}
-    .table-wrap{margin:8px 0}
+  .muted{color:#6b7280}
+  small{font-size:12px;color:#4b5563}
     .table-wrap.collapsed tbody tr:nth-child(n+11){display:none}
     .table-tools{margin:6px 0 14px;display:flex;justify-content:flex-end}
     .toggle-rows{background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:6px 10px;cursor:pointer}
@@ -164,13 +166,13 @@ const htmlTemplate = `<!doctype html>
 
   <section class="grid">
     {{range .A.Warnings}}
-      <div class="card warn"><strong>{{.Title}}</strong><div>{{.Description}}</div><div><em>{{.Action}}</em></div></div>
+      <div class="card warn"><strong>{{.Title}}</strong><div>{{.Description}}</div><div><small>{{.Action}}</small></div></div>
     {{end}}
     {{range .A.Recommendations}}
-      <div class="card rec"><strong>{{.Title}}</strong><div>{{.Description}}</div><div><em>{{.Action}}</em></div></div>
+      <div class="card rec"><strong>{{.Title}}</strong><div>{{.Description}}</div><div><small>{{.Action}}</small></div></div>
     {{end}}
     {{range .A.Infos}}
-      <div class="card info"><strong>{{.Title}}</strong><div>{{.Description}}</div><div><em>{{.Action}}</em></div></div>
+      <div class="card info"><strong>{{.Title}}</strong><div>{{.Description}}</div><div><small>{{.Action}}</small></div></div>
     {{end}}
   </section>
 
@@ -264,6 +266,21 @@ const htmlTemplate = `<!doctype html>
       <strong>Connections</strong>
       <div>Used: {{fmtInt .Res.TotalConnections}} / {{fmtInt .Res.ConnInfo.MaxConnections}}</div>
     </div>
+  </div>
+
+  <h2>Tables size (rows, Mb)</h2>
+  <div class="table-wrap collapsed">
+  <table>
+    <thead><tr><th>Schema</th><th>Table</th><th>Rows</th><th>Size, Mb</th></tr></thead>
+    <tbody>
+    {{if .Res.Tables}}
+      {{range .Res.Tables}}<tr><td>{{.Schema}}</td><td>{{.Name}}</td><td>{{fmtI64 .NLiveTup}}</td><td>{{fmtMB .SizeBytes}}</td></tr>{{end}}
+    {{else}}
+      <tr><td colspan="4" class="muted">No data</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{if gt (len .Res.Tables) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h3>Cache hit ratio by database</h3>
