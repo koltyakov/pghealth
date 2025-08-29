@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/koltyakov/pghealth/internal/collect"
 )
@@ -23,6 +24,81 @@ type Finding struct {
 
 func Run(res collect.Result) Analysis {
 	a := Analysis{}
+	// Uptime info
+	if !res.ConnInfo.StartTime.IsZero() {
+		up := time.Since(res.ConnInfo.StartTime)
+		a.Infos = append(a.Infos, Finding{
+			Title:       "Server uptime",
+			Severity:    "info",
+			Description: fmt.Sprintf("%s (since %s)", up.Truncate(time.Second), res.ConnInfo.StartTime.Format(time.RFC3339)),
+			Action:      "",
+		})
+	}
+
+	// Cache hit ratios
+	if res.CacheHitCurrent > 0 {
+		if res.CacheHitCurrent < 95 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "Low cache hit ratio (current DB)",
+				Severity:    "warn",
+				Description: fmt.Sprintf("Cache hit: %.1f%%", res.CacheHitCurrent),
+				Action:      "Review working set size, shared_buffers, and query patterns; ensure sufficient memory and indexes.",
+			})
+		} else {
+			a.Infos = append(a.Infos, Finding{Title: "Cache hit ratio (current)", Severity: "info", Description: fmt.Sprintf("%.1f%%", res.CacheHitCurrent)})
+		}
+	}
+	if res.CacheHitOverall > 0 {
+		if res.CacheHitOverall < 95 {
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Overall cache hit could improve",
+				Severity:    "rec",
+				Description: fmt.Sprintf("Cluster-wide cache hit: %.1f%%", res.CacheHitOverall),
+				Action:      "Consider memory tuning and index coverage across busiest databases.",
+			})
+		}
+	}
+
+	// Connection usage
+	if res.ConnInfo.MaxConnections > 0 && res.TotalConnections > 0 {
+		pct := float64(res.TotalConnections) / float64(res.ConnInfo.MaxConnections) * 100
+		if pct >= 80 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "High connection usage",
+				Severity:    "warn",
+				Description: fmt.Sprintf("%d/%d (%.0f%%) connections in use", res.TotalConnections, res.ConnInfo.MaxConnections, pct),
+				Action:      "Use a pooler (pgbouncer), limit app connection pools, and tune max_connections accordingly.",
+			})
+		} else {
+			a.Infos = append(a.Infos, Finding{Title: "Connection usage", Severity: "info", Description: fmt.Sprintf("%d/%d (%.0f%%)", res.TotalConnections, res.ConnInfo.MaxConnections, pct)})
+		}
+	}
+
+	// Blocking and long running queries
+	if len(res.Blocking) > 0 {
+		a.Warnings = append(a.Warnings, Finding{
+			Title:       "Blocking detected",
+			Severity:    "warn",
+			Description: fmt.Sprintf("%d blocked sessions", len(res.Blocking)),
+			Action:      "Inspect lock tree, add indexes, shorten transactions, consider lock timeouts.",
+		})
+	}
+	if len(res.LongRunning) > 0 {
+		a.Recommendations = append(a.Recommendations, Finding{
+			Title:       "Long-running queries",
+			Severity:    "rec",
+			Description: fmt.Sprintf("%d active queries > 5m", len(res.LongRunning)),
+			Action:      "EXPLAIN ANALYZE top offenders; optimize plans, add indexes, break large batches.",
+		})
+	}
+	if len(res.AutoVacuum) > 0 {
+		a.Infos = append(a.Infos, Finding{
+			Title:       "Autovacuum activity",
+			Severity:    "info",
+			Description: fmt.Sprintf("%d vacuum workers in progress", len(res.AutoVacuum)),
+			Action:      "Ensure autovacuum is not throttled for large tables; tune naptime, scale_factor, and cost limits if needed.",
+		})
+	}
 
 	// Privilege and extensions
 	if !res.Extensions.PgStatStatements {
