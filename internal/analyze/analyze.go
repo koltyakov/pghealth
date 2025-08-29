@@ -267,7 +267,7 @@ func Run(res collect.Result) Analysis {
 		})
 	}
 
-	// Statements if available
+	// Statements / pg_stat_statements context
 	if res.Statements.Available {
 		if len(res.Statements.TopByTotalTime) > 0 {
 			q := res.Statements.TopByTotalTime[0]
@@ -279,12 +279,21 @@ func Run(res collect.Result) Analysis {
 			})
 		}
 	} else {
-		a.Infos = append(a.Infos, Finding{
-			Title:       "Query-level analysis limited",
-			Severity:    "info",
-			Description: "pg_stat_statements not available; only coarse-grained insights reported.",
-			Action:      "Install and configure pg_stat_statements for detailed top queries.",
-		})
+		if res.Extensions.PgStatStatements {
+			a.Infos = append(a.Infos, Finding{
+				Title:       "pg_stat_statements installed",
+				Severity:    "info",
+				Description: "Extension is present but returned no rows for top queries (possibly recently reset or limited visibility).",
+				Action:      "Run workload, ensure pg_stat_statements is preloaded and tracking settings are appropriate; verify role has access.",
+			})
+		} else {
+			a.Infos = append(a.Infos, Finding{
+				Title:       "Query-level analysis limited",
+				Severity:    "info",
+				Description: "pg_stat_statements not available; only coarse-grained insights reported.",
+				Action:      "Install and configure pg_stat_statements for detailed top queries.",
+			})
+		}
 	}
 
 	return a

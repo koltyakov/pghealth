@@ -32,6 +32,15 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	sort.Slice(res.IndexUnused, func(i, j int) bool { return res.IndexUnused[i].SizeBytes > res.IndexUnused[j].SizeBytes })
 	sort.Slice(res.Indexes, func(i, j int) bool { return res.Indexes[i].SizeBytes > res.Indexes[j].SizeBytes })
 
+	// Precompute whether any client has a hostname to show
+	showHostname := false
+	for _, c := range res.ConnectionsByClient {
+		if c.Hostname != "" {
+			showHostname = true
+			break
+		}
+	}
+
 	tmpl := template.Must(template.New("report").Funcs(template.FuncMap{
 		"since": func(t time.Time) string { return time.Since(t).String() },
 		"fmtBytes": func(b int64) string {
@@ -53,24 +62,15 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		"fmtF2":  func(f float64) string { return fmtFloatPrecSep(f, 2) },
 	}).Parse(htmlTemplate))
 	data := struct {
-		Res  collect.Result
-		A    analyze.Analysis
-		Meta collect.Meta
-	}{Res: res, A: a, Meta: meta}
+		Res          collect.Result
+		A            analyze.Analysis
+		Meta         collect.Meta
+		ShowHostname bool
+	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname}
 	return tmpl.Execute(f, data)
 }
 
-func fmtFloat(f float64) string {
-	// strip trailing zeros
-	s := (func() string { return strconv.FormatFloat(f, 'f', 2, 64) })()
-	for len(s) > 0 && s[len(s)-1] == '0' {
-		s = s[:len(s)-1]
-	}
-	if len(s) > 0 && s[len(s)-1] == '.' {
-		s = s[:len(s)-1]
-	}
-	return s
-}
+// fmtFloat previously trimmed trailing zeros; replaced by fmtFloatPrecSep
 
 // fmtFloatPrecSep formats a float with fixed precision and thousands separators in the integer part
 func fmtFloatPrecSep(f float64, prec int) string {
@@ -142,12 +142,17 @@ const htmlTemplate = `<!doctype html>
     .rec{border-left:4px solid #10b981}
     .info{border-left:4px solid #3b82f6}
   table{border-collapse:separate;border-spacing:0;width:100%;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
-  th,td{border-bottom:1px solid #e5e7eb;padding:10px 12px;text-align:left;vertical-align:top}
+  th,td{border:1px solid #e5e7eb;padding:10px 12px;text-align:left;vertical-align:top}
   thead th{background:#f9fafb;font-weight:600}
   tbody tr:nth-child(even){background:#fcfcfd}
   tbody tr:hover{background:#f8fafc}
     code{background:#f3f4f6;padding:2px 4px;border-radius:4px}
     .muted{color:#6b7280}
+    .table-wrap{margin:8px 0}
+    .table-wrap.collapsed tbody tr:nth-child(n+11){display:none}
+    .table-tools{margin:6px 0 14px;display:flex;justify-content:flex-end}
+    .toggle-rows{background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:6px 10px;cursor:pointer}
+    .toggle-rows:hover{background:#f9fafb}
   </style>
   </head>
 <body>
@@ -170,6 +175,7 @@ const htmlTemplate = `<!doctype html>
   </section>
 
   <h2>Connections</h2>
+  <div class="table-wrap collapsed">
   <table>
     <thead><tr><th>Database</th><th>State</th><th>Count</th></tr></thead>
     <tbody>
@@ -180,8 +186,11 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.Activity) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  </div>
 
   <h2>Databases</h2>
+  <div class="table-wrap collapsed">
   <table>
     <thead><tr><th>Name</th><th>Size, Mb</th><th>Tablespace</th><th>Connections</th></tr></thead>
     <tbody>
@@ -192,20 +201,26 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  </div>
 
   <h2>Settings (subset)</h2>
+  <div class="table-wrap collapsed">
   <table>
     <thead><tr><th>Name</th><th>Value</th><th>Unit</th><th>Source</th></tr></thead>
     <tbody>
     {{if .Res.Settings}}
-      {{range .Res.Settings}}<tr><td><code>{{.Name}}</code></td><td>{{.Val}}</td><td>{{.Unit}}</td><td>{{.Source}}</td></tr>{{end}}
+  {{range .Res.Settings}}<tr><td>{{.Name}}</td><td>{{.Val}}</td><td>{{.Unit}}</td><td>{{.Source}}</td></tr>{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  </div>
 
   <h2>Indexes (unused candidates)</h2>
+  <div class="table-wrap collapsed">
   <table>
     <thead><tr><th>Schema</th><th>Table</th><th>Index</th><th>Size, Mb</th></tr></thead>
     <tbody>
@@ -216,8 +231,11 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  </div>
 
   <h2>Tables with lowest index usage</h2>
+  <div class="table-wrap collapsed">
   <table>
     <thead><tr><th>Schema</th><th>Table</th><th>Index usage (%)</th><th>Rows</th></tr></thead>
     <tbody>
@@ -228,6 +246,8 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  </div>
 
   <h2>Healthchecks</h2>
   <div class="grid">
@@ -247,6 +267,7 @@ const htmlTemplate = `<!doctype html>
   </div>
 
   <h3>Cache hit ratio by database</h3>
+  <div class="table-wrap collapsed">
   <table>
     <thead><tr><th>Database</th><th>blks_hit</th><th>blks_read</th><th>Hit ratio (%)</th></tr></thead>
     <tbody>
@@ -257,22 +278,31 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  </div>
 
   <h3>Connections by client</h3>
+  <div class="table-wrap collapsed">
   <table>
-    <thead><tr><th>Hostname</th><th>Address</th><th>User</th><th>Application</th><th>Connections</th></tr></thead>
+    <thead><tr>{{if .ShowHostname}}<th>Hostname</th>{{end}}<th>Address</th><th>User</th><th>Application</th><th>Connections</th></tr></thead>
     <tbody>
     {{if .Res.ConnectionsByClient}}
-      {{range .Res.ConnectionsByClient}}<tr><td>{{.Hostname}}</td><td>{{.Address}}</td><td>{{.User}}</td><td>{{.Application}}</td><td>{{fmtInt .Count}}</td></tr>{{end}}
+      {{range .Res.ConnectionsByClient}}<tr>{{if $.ShowHostname}}<td>{{.Hostname}}</td>{{end}}<td>{{.Address}}</td><td>{{.User}}</td><td>{{.Application}}</td><td>{{fmtInt .Count}}</td></tr>{{end}}
     {{else}}
-      <tr><td colspan="5" class="muted">No data</td></tr>
+      {{if .ShowHostname}}
+        <tr><td colspan="5" class="muted">No data</td></tr>
+      {{else}}
+        <tr><td colspan="4" class="muted">No data</td></tr>
+      {{end}}
     {{end}}
     </tbody>
   </table>
+  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  </div>
 
-  {{if .Res.Statements.Available}}
+  {{if .Res.Extensions.PgStatStatements}}
   <h2>Top queries by total time</h2>
-  <table>
+  <div class="table-wrap collapsed"><table>
     <thead><tr><th>Calls</th><th>Total time (ms)</th><th>Mean time (ms)</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByTotalTime}}
@@ -281,10 +311,10 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
     </tbody>
-  </table>
+  </table>{{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <h2>Top queries by CPU (approx)</h2>
-  <table>
+  <div class="table-wrap collapsed"><table>
     <thead><tr><th>Calls</th><th>CPU time (ms)</th><th>Total time (ms)</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByCPU}}
@@ -293,10 +323,10 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
     </tbody>
-  </table>
+  </table>{{if gt (len .Res.Statements.TopByCPU) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <h2>Top queries by IO time</h2>
-  <table>
+  <div class="table-wrap collapsed"><table>
     <thead><tr><th>Calls</th><th>IO time (ms)</th><th>Read (ms)</th><th>Write (ms)</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByIO}}
@@ -305,10 +335,10 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="5" class="muted">No data</td></tr>
     {{end}}
     </tbody>
-  </table>
+  </table>{{if gt (len .Res.Statements.TopByIO) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <h2>Top queries by calls</h2>
-  <table>
+  <div class="table-wrap collapsed"><table>
     <thead><tr><th>Calls</th><th>Total time (ms)</th><th>Mean time (ms)</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByCalls}}
@@ -317,13 +347,13 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
     </tbody>
-  </table>
+  </table>{{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
   {{else}}
-  <p>pg_stat_statements not available. Install it for detailed query insights.</p>
+  <p>pg_stat_statements is not enabled in this database. Install and preload it for detailed query insights.</p>
   {{end}}
 
   <h2>Blocking queries</h2>
-  <table>
+  <div class="table-wrap collapsed"><table>
     <thead><tr><th>DB</th><th>Blocked PID</th><th>Blocked for</th><th>Blocking PID</th><th>Blocking for</th><th>Blocked query</th><th>Blocking query</th></tr></thead>
     <tbody>
     {{if .Res.Blocking}}
@@ -332,10 +362,10 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="7" class="muted">No blocking detected</td></tr>
     {{end}}
     </tbody>
-  </table>
+  </table>{{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <h2>Long running queries (> 5m)</h2>
-  <table>
+  <div class="table-wrap collapsed"><table>
     <thead><tr><th>DB</th><th>PID</th><th>Duration</th><th>State</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.LongRunning}}
@@ -344,10 +374,10 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="5" class="muted">No long running queries</td></tr>
     {{end}}
     </tbody>
-  </table>
+  </table>{{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <h2>Autovacuum activities</h2>
-  <table>
+  <div class="table-wrap collapsed"><table>
     <thead><tr><th>DB</th><th>PID</th><th>Relation</th><th>Phase</th><th>Scanned</th><th>Total</th></tr></thead>
     <tbody>
     {{if .Res.AutoVacuum}}
@@ -356,8 +386,21 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="6" class="muted">No autovacuum workers</td></tr>
     {{end}}
     </tbody>
-  </table>
+  </table>{{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <footer style="margin-top:24px;color:#6b7280">Report generated at {{.Meta.StartedAt}} in {{.Meta.Duration}}</footer>
+
+  <script>
+  (function(){
+    document.addEventListener('click', function(e){
+      if(e.target && e.target.classList.contains('toggle-rows')){
+        var wrap = e.target.closest('.table-wrap');
+        if(!wrap) return;
+        wrap.classList.toggle('collapsed');
+        e.target.textContent = wrap.classList.contains('collapsed') ? 'Show all' : 'Show less';
+      }
+    });
+  })();
+  </script>
 </body>
 </html>`
