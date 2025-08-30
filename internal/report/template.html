@@ -578,6 +578,7 @@
           <th>Index Count</th>
           <th>Size</th>
           <th>Rows</th>
+          <th>Dead rows</th>
           <th>Bloat %</th>
         </tr>
       </thead>
@@ -591,12 +592,13 @@
           <td{{if eq .IndexCount 0}} class="badge-attn"{{end}}>{{.IndexCount}}</td>
             <td>{{fmtBytes .SizeBytes}}</td>
             <td>{{fmtThousands .RowCount}}</td>
+            <td>{{fmtThousands .DeadRows}}</td>
             <td>{{printf "%.1f" .BloatPct}}%</td>
             </tr>
             {{end}}
             {{else}}
             <tr>
-              {{if .ShowDBIndexCounts}}<td colspan="7" class="muted">No data</td>{{else}}<td colspan="6" class="muted">No data</td>{{end}}
+              {{if .ShowDBIndexCounts}}<td colspan="8" class="muted">No data</td>{{else}}<td colspan="7" class="muted">No data</td>{{end}}
             </tr>
             {{end}}
       </tbody>
@@ -604,6 +606,7 @@
   {{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
     data-target="#table-index-counts">Show all</button></div>{{end}}
   </div>
+  {{if .BloatPctNote}}<p class="section-note">{{.BloatPctNote}}</p>{{end}}
 
   {{if .Res.Extensions.PgStatStatements}}
   {{if .Res.Statements.SkippedReason}}

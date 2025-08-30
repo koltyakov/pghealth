@@ -219,6 +219,7 @@ type TableIndexCount struct {
 	IndexCount int
 	SizeBytes  int64
 	RowCount   int64
+	DeadRows   int64
 	BloatPct   float64
 }
 
@@ -562,6 +563,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				count(i.indexrelid) as index_count,
 				pg_total_relation_size(format('%I.%I', t.schemaname, t.relname)) as size_bytes,
 				t.n_live_tup,
+				t.n_dead_tup,
 				coalesce(100.0 * t.n_dead_tup / nullif(t.n_live_tup + t.n_dead_tup, 0), 0.0) as bloat_pct
 			from pg_stat_user_tables t
 			left join pg_stat_user_indexes i on i.schemaname = t.schemaname and i.relname = t.relname
@@ -570,7 +572,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			limit 100`); err == nil {
 				for rows.Next() {
 					var tic TableIndexCount
-					_ = rows.Scan(&tic.Schema, &tic.Name, &tic.IndexCount, &tic.SizeBytes, &tic.RowCount, &tic.BloatPct)
+					_ = rows.Scan(&tic.Schema, &tic.Name, &tic.IndexCount, &tic.SizeBytes, &tic.RowCount, &tic.DeadRows, &tic.BloatPct)
 					tic.Database = db
 					res.TablesWithIndexCount = append(res.TablesWithIndexCount, tic)
 				}
@@ -977,6 +979,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			count(i.indexrelid) as index_count,
 			pg_total_relation_size(format('%I.%I', t.schemaname, t.relname)) as size_bytes,
 			t.n_live_tup,
+			t.n_dead_tup,
 			coalesce(100.0 * t.n_dead_tup / nullif(t.n_live_tup + t.n_dead_tup, 0), 0.0) as bloat_pct
 		from pg_stat_user_tables t
 		left join pg_stat_user_indexes i on i.schemaname = t.schemaname and i.relname = t.relname
@@ -985,7 +988,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		limit 100`); err == nil {
 		for rows.Next() {
 			var tic TableIndexCount
-			_ = rows.Scan(&tic.Schema, &tic.Name, &tic.IndexCount, &tic.SizeBytes, &tic.RowCount, &tic.BloatPct)
+			_ = rows.Scan(&tic.Schema, &tic.Name, &tic.IndexCount, &tic.SizeBytes, &tic.RowCount, &tic.DeadRows, &tic.BloatPct)
 			tic.Database = res.ConnInfo.CurrentDB
 			res.TablesWithIndexCount = append(res.TablesWithIndexCount, tic)
 		}
@@ -1162,8 +1165,6 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			}
 		}
 	}
-
-	return res, nil
 
 	return res, nil
 }

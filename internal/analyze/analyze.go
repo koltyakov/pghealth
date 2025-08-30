@@ -238,10 +238,11 @@ func Run(res collect.Result) Analysis {
 			list += fmt.Sprintf("%s.%s(%.0f%%)", b.schema, b.table, b.pct)
 		}
 		a.Warnings = append(a.Warnings, Finding{
-			Title:       "Potential table bloat",
+			Title:       "Potential table bloat (heuristic)",
 			Severity:    "warn",
+			Code:        "table-bloat-heuristic",
 			Description: fmt.Sprintf("Tables with high dead tuple ratio: %s", list),
-			Action:      "Investigate autovacuum, consider REINDEX/VACUUM (FULL) or pg_repack on large bloated relations.",
+			Action:      "Rows highlighted in 'Tables with index counts' exceed ~20% bloat by dead tuple share. Short-term: run VACUUM; for severe cases (>50%) schedule VACUUM FULL or pg_repack during maintenance. Long-term: tune autovacuum thresholds (lower scale_factor for hot tables), consider lower fillfactor to improve HOT updates, and periodically REINDEX if indexes are bloated.",
 		})
 	}
 

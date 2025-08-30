@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -34,22 +35,77 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	})
 	sort.Slice(res.IndexUnused, func(i, j int) bool { return res.IndexUnused[i].SizeBytes > res.IndexUnused[j].SizeBytes })
 	sort.Slice(res.Indexes, func(i, j int) bool { return res.Indexes[i].SizeBytes > res.Indexes[j].SizeBytes })
-	// Sort tables with index counts by IndexCount desc across all DBs
-	sort.Slice(res.TablesWithIndexCount, func(i, j int) bool {
-		if res.TablesWithIndexCount[i].IndexCount == res.TablesWithIndexCount[j].IndexCount {
-			// tie-breaker by size desc, then name
-			if res.TablesWithIndexCount[i].SizeBytes == res.TablesWithIndexCount[j].SizeBytes {
-				if res.TablesWithIndexCount[i].Database == res.TablesWithIndexCount[j].Database {
-					if res.TablesWithIndexCount[i].Schema == res.TablesWithIndexCount[j].Schema {
-						return res.TablesWithIndexCount[i].Name < res.TablesWithIndexCount[j].Name
-					}
-					return res.TablesWithIndexCount[i].Schema < res.TablesWithIndexCount[j].Schema
-				}
-				return res.TablesWithIndexCount[i].Database < res.TablesWithIndexCount[j].Database
+	// Sort tables with index counts by impact using a severity score:
+	// Priority signals: large zero-index tables, high-bloat large tables, very large tables, and over-indexed big tables.
+	// Score components (additive):
+	// - Zero index boost (bigger for larger row counts)
+	// - Bloat boost scaled by row count
+	// - Size boost (log scale)
+	// - Many indexes boost for >10 indexes
+	// - Dead rows boost (log scale)
+	score := func(t collect.TableIndexCount) float64 {
+		// safe logs
+		log10 := func(x float64) float64 {
+			if x <= 0 {
+				return 0
 			}
-			return res.TablesWithIndexCount[i].SizeBytes > res.TablesWithIndexCount[j].SizeBytes
+			return math.Log10(x)
 		}
-		return res.TablesWithIndexCount[i].IndexCount > res.TablesWithIndexCount[j].IndexCount
+		log2 := func(x float64) float64 {
+			if x <= 0 {
+				return 0
+			}
+			return math.Log2(x)
+		}
+		s := 0.0
+		// Zero indexes on large tables are critical
+		if t.IndexCount == 0 {
+			s += 100.0 + math.Min(60.0, log10(float64(t.RowCount)+1)*10.0)
+		}
+		// Bloat severity grows with both percent and table size (rows)
+		s += math.Min(50.0, t.BloatPct) * (1.0 + log10(float64(t.RowCount)+1))
+		// Absolute dead rows add weight
+		s += log10(float64(t.DeadRows)+1.0) * 2.0
+		// Size in bytes (log scale)
+		s += log2(float64(t.SizeBytes) + 1.0)
+		// Over-indexing: mild boost for >10 indexes
+		if t.IndexCount > 10 {
+			s += math.Min(30.0, float64(t.IndexCount-10)*2.0)
+		}
+		return s
+	}
+	sort.Slice(res.TablesWithIndexCount, func(i, j int) bool {
+		a, b := res.TablesWithIndexCount[i], res.TablesWithIndexCount[j]
+		sa, sb := score(a), score(b)
+		if sa != sb {
+			return sa > sb
+		}
+		// Stable, meaningful tie-breakers
+		if a.IndexCount == 0 && b.IndexCount != 0 { // prefer zero-index ties first
+			return true
+		}
+		if a.IndexCount != 0 && b.IndexCount == 0 {
+			return false
+		}
+		if a.BloatPct != b.BloatPct {
+			return a.BloatPct > b.BloatPct
+		}
+		if a.SizeBytes != b.SizeBytes {
+			return a.SizeBytes > b.SizeBytes
+		}
+		if a.RowCount != b.RowCount {
+			return a.RowCount > b.RowCount
+		}
+		if a.IndexCount != b.IndexCount {
+			return a.IndexCount > b.IndexCount
+		}
+		if a.Database != b.Database {
+			return a.Database < b.Database
+		}
+		if a.Schema != b.Schema {
+			return a.Schema < b.Schema
+		}
+		return a.Name < b.Name
 	})
 	// Prepare sorted copies for top tables by rows and by size
 	tablesBySize := make([]collect.TableStat, len(res.Tables))
@@ -273,6 +329,9 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		return fmt.Sprintf("Autovacuum workers: %d active. Ensure cost settings aren’t throttling large tables.", len(res.AutoVacuum))
 	}()
 
+	// Brief explanation for Bloat % in "Tables with index counts"
+	bloatPctNote := "Bloat % is a heuristic: dead tuples share = n_dead_tup / (n_live_tup + n_dead_tup). Rows over ~20% are highlighted. Use VACUUM to reclaim space; for severe bloat (>50%), consider VACUUM FULL or pg_repack and tune autovacuum (scale_factor, naptime, cost limits)."
+
 	funcMap := template.FuncMap{
 		"since":    func(t time.Time) string { return time.Since(t).String() },
 		"add":      func(a, b int64) int64 { return a + b },
@@ -351,10 +410,12 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		BlockingSummary    string
 		LongRunningSummary string
 		AutovacSummary     string
+		BloatPctNote       string
 	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize, LargeUnused: largeUnused,
 		ShowDBTablesByRows: showDBTablesByRows, ShowDBTablesBySize: showDBTablesBySize, ShowDBIndexUnused: showDBIndexUnused, ShowDBLargeUnused: showDBLargeUnused, ShowDBIndexUsageLow: showDBIndexUsageLow, ShowDBIndexCounts: showDBIndexCounts,
 		ConnSummary: connSummary, DBsSummary: dbsSummary, CacheHitsSummary: cacheHitsSummary, IndexUnusedSummary: indexUnusedSummary, LargeUnusedSummary: largeUnusedSummary,
-		IndexUsageSummary: indexUsageSummary, ClientsSummary: clientsSummary, BlockingSummary: blockingSummary, LongRunningSummary: longRunningSummary, AutovacSummary: autovacSummary}
+		IndexUsageSummary: indexUsageSummary, ClientsSummary: clientsSummary, BlockingSummary: blockingSummary, LongRunningSummary: longRunningSummary, AutovacSummary: autovacSummary,
+		BloatPctNote: bloatPctNote}
 	return tmpl.Execute(f, data)
 }
 
