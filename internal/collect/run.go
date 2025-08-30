@@ -147,9 +147,11 @@ type Statement struct {
 
 // PlanAdvice contains collected EXPLAIN plan text, highlights and human suggestions
 type PlanAdvice struct {
-	Plan        string
-	Highlights  []string
-	Suggestions []string
+	Plan            string
+	Highlights      []string
+	Suggestions     []string
+	CanBeIndexed    bool
+	CanBeRefactored bool
 }
 
 // Healthcheck types
@@ -549,22 +551,32 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 					if ts, ok := findTable(tn); ok {
 						if ts.NLiveTup > 100000 { // large table heuristic
 							advice.Suggestions = append(advice.Suggestions, fmt.Sprintf("Large table %s scanned sequentially — consider adding/using an index on predicate/join columns.", tn))
+							advice.CanBeIndexed = true
 						} else {
 							advice.Suggestions = append(advice.Suggestions, fmt.Sprintf("Sequential scan on %s — verify if intentional (small table) or add an index.", tn))
+							advice.CanBeIndexed = true
 						}
 						if !hasAnyIndex(tn) {
 							advice.Suggestions = append(advice.Suggestions, fmt.Sprintf("No indexes found on %s — create indexes on frequently filtered or joined columns.", tn))
+							advice.CanBeIndexed = true
 						}
 					} else {
 						advice.Suggestions = append(advice.Suggestions, fmt.Sprintf("Sequential scan on %s — consider index on predicate columns.", tn))
+						advice.CanBeIndexed = true
 					}
 				}
 			}
 			if hasSort {
 				advice.Suggestions = append(advice.Suggestions, "Add or adjust an index matching ORDER BY to avoid Sort when appropriate.")
+				advice.CanBeIndexed = true
 			}
 			if hasJoin {
 				advice.Suggestions = append(advice.Suggestions, "Ensure join keys are indexed on both sides (or use suitable composite indexes).")
+				advice.CanBeIndexed = true
+			}
+			if !advice.CanBeIndexed && len(seqOn) > 0 {
+				advice.CanBeRefactored = true
+				advice.Suggestions = append(advice.Suggestions, "Query uses sequential scans but no clear index path was found. Consider refactoring the query for better performance.")
 			}
 			if advice.Plan != "" || len(advice.Suggestions) > 0 || len(advice.Highlights) > 0 {
 				res.Statements.TopByTotalTime[i].Advice = advice
@@ -702,7 +714,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		}
 	}
 
-	// New: Tables with index counts
+	// Tables with index counts
 	if rows, err := conn.Query(ctx, `select t.schemaname, t.relname,
 			count(i.indexrelid) as index_count,
 			pg_total_relation_size(format('%I.%I', t.schemaname, t.relname)) as size_bytes,
@@ -721,7 +733,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// New: Advanced table bloat analysis
+	// Advanced table bloat analysis
 	if rows, err := conn.Query(ctx, `select schemaname, relname,
 			coalesce(100.0 * n_dead_tup / nullif(n_live_tup + n_dead_tup, 0), 0.0) as bloat_pct,
 			pg_total_relation_size(format('%I.%I', schemaname, relname)) * 
@@ -742,7 +754,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// New: Index bloat analysis
+	// Index bloat analysis
 	if rows, err := conn.Query(ctx, `select s.schemaname, s.relname, s.indexrelname,
 			0.0 as estimated_bloat, -- Placeholder for actual bloat calculation
 			pg_relation_size(s.indexrelid) as size_bytes,
@@ -759,7 +771,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// New: Replication statistics
+	// Replication statistics
 	if rows, err := conn.Query(ctx, `select application_name, state, sync_state, sync_priority,
 			coalesce(write_lag::text, '00:00:00') as write_lag,
 			coalesce(flush_lag::text, '00:00:00') as flush_lag,
@@ -774,7 +786,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// New: Checkpoint statistics
+	// Checkpoint statistics
 	if rows, err := conn.Query(ctx, `select checkpoints_req, checkpoints_timed,
 			checkpoint_write_time, checkpoint_sync_time,
 			buffers_checkpoint, buffers_clean
@@ -787,7 +799,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// New: Memory statistics
+	// Memory statistics
 	if rows, err := conn.Query(ctx, `select buffers_alloc, buffers_checkpoint + buffers_clean + buffers_backend,
 			0 as work_mem_used, 0 as maint_work_mem, 0 as temp_buffers, 0 as local_buffers
 		from pg_stat_bgwriter`); err == nil {
@@ -799,7 +811,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// New: IO statistics
+	// IO statistics
 	if rows, err := conn.Query(ctx, `select heap_blks_read, heap_blks_hit, idx_blks_read, idx_blks_hit,
 			toast_blks_read, toast_blks_hit, tidx_blks_read, tidx_blks_hit,
 			coalesce(blk_read_time, 0), coalesce(blk_write_time, 0)
@@ -815,7 +827,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// New: Lock statistics
+	// Lock statistics
 	if rows, err := conn.Query(ctx, `select locktype, mode, granted, count(*) as count,
 			array_agg(pid) as waiting_pids
 		from pg_locks
@@ -831,7 +843,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// New: Temporary file statistics
+	// Temporary file statistics
 	if rows, err := conn.Query(ctx, `select datname, pid, temp_files, temp_bytes
 		from pg_stat_activity
 		where temp_files > 0 or temp_bytes > 0
@@ -845,7 +857,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// New: Extension statistics
+	// Extension statistics
 	if rows, err := conn.Query(ctx, `select e.extname, e.extversion, obj_description(e.oid, 'pg_extension'),
 			n.nspname
 		from pg_extension e

@@ -282,11 +282,19 @@ func Run(res collect.Result) Analysis {
 
 		// Derive optimization recommendations from collected EXPLAIN plan advice
 		seqScanTables := map[string]struct{}{}
+		canBeIndexedCount := 0
+		canBeRefactoredCount := 0
 		hasSort := false
 		hasJoin := false
 		for _, st := range res.Statements.TopByTotalTime {
 			if st.Advice == nil {
 				continue
+			}
+			if st.Advice.CanBeIndexed {
+				canBeIndexedCount++
+			}
+			if st.Advice.CanBeRefactored {
+				canBeRefactoredCount++
 			}
 			for _, h := range st.Advice.Highlights {
 				uh := strings.ToUpper(h)
@@ -323,6 +331,22 @@ func Run(res collect.Result) Analysis {
 				Severity:    "rec",
 				Description: fmt.Sprintf("Sequential scans detected on: %s", strings.Join(names, ", ")),
 				Action:      "Create or refine indexes on selective WHERE and JOIN columns; analyze tables; ensure statistics are up to date.",
+			})
+		}
+		if canBeIndexedCount > 0 {
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Index improvements possible for slow queries",
+				Severity:    "rec",
+				Description: fmt.Sprintf("%d slow queries could be improved with new or better indexes.", canBeIndexedCount),
+				Action:      "Run EXPLAIN on slow queries to identify missing indexes on columns used in WHERE clauses, JOINs, or ORDER BY.",
+			})
+		}
+		if canBeRefactoredCount > 0 {
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Query refactoring needed for slow queries",
+				Severity:    "rec",
+				Description: fmt.Sprintf("%d slow queries may need refactoring as indexes alone may not solve the performance issue.", canBeRefactoredCount),
+				Action:      "Analyze the execution plan of slow queries to understand the cause. Consider rewriting the query, breaking it into smaller parts, or using different join strategies.",
 			})
 		}
 		if hasSort {
