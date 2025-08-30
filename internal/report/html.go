@@ -332,49 +332,242 @@ const htmlTemplate = `<!doctype html>
   <meta charset="utf-8">
   <title>PostgreSQL Health Check Report</title>
   <style>
-		body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin:24px; color:#111827;}
-		header{margin-bottom:36px}
-		h1{font-size:20px;margin:0 0 12px 0}
-		header > div{margin-top:6px}
-		h2{margin-top:24px;border-bottom:1px solid #e5e7eb;padding-bottom:4px}
-		.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
-		.card{border:1px solid #e5e7eb;padding:12px;background:#fff}
-		/* Improve card readability */
-		.card > strong{display:block;margin-bottom:8px}
-		.card > div{margin:6px 0}
-		.card small{display:block;margin-top:6px}
-		.warn{border-left:4px solid #f59e0b}
-		.rec{border-left:4px solid #10b981}
-		.info{border-left:4px solid #3b82f6}
-		.table-wrap{margin:8px 0; overflow:hidden}
-		table{border-collapse:collapse;border-spacing:0;width:100%}
-		th,td{border:1px solid #9ca3af;padding:10px 12px;text-align:left;vertical-align:top}
-		thead th{background:#f3f4f6;font-weight:600;border-bottom:2px solid #9ca3af}
-		tbody tr:nth-child(even){background:#fcfcfd}
-		tbody tr:hover{background:#f8fafc}
-		code{background:#f3f4f6;padding:2px 4px}
-		.muted{color:#6b7280}
-		small{font-size:12px;color:#4b5563}
-		.table-wrap.collapsed tbody tr:nth-child(n+11){display:none}
-		.table-tools{margin:12px 0 0;display:flex;justify-content:flex-end;padding:0}
-		.hot{background:#fff7ed}
-		.toggle-rows{background:#fff;border:1px solid #d1d5db;padding:6px 10px;cursor:pointer}
-		.toggle-rows:hover{background:#f9fafb}
-		pre{white-space:pre-wrap;max-height:8em;overflow:auto;margin:0;background:#f8fafc;border:1px solid #e5e7eb;padding:8px}
-		pre.query.expanded{max-height:none}
-		.plan-pre.expanded{max-height:none}
-		.query-short{display:block;max-height:4em;overflow:hidden}
-		.query-full{display:none}
-		.show-full{background:#fff;border:1px solid #d1d5db;padding:2px 6px;margin-top:6px;cursor:pointer}
-		.nowrap{white-space:nowrap}
-		.badge-attn{display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;padding:2px 6px;font-size:12px;border-radius:4px}
-		.section-note{margin:8px 0 0;color:#4b5563}
-		/* Plan advice styling */
-		.plan-advice{margin-top:8px;padding:8px;border:1px solid #e5e7eb;background:#f9fafb}
-		.plan-advice h4{margin:0 0 6px;font-size:14px}
-		.plan-advice ul{margin:6px 0 8px 18px}
-		.show-plan{background:#fff;border:1px solid #d1d5db;padding:2px 6px;margin-top:6px;cursor:pointer}
-		.plan-pre{white-space:pre-wrap;max-height:12em;overflow:auto;margin:6px 0 0;background:#f8fafc;border:1px solid #e5e7eb;padding:8px}
+    /* Base styles */
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      margin: 24px;
+      color: #111827;
+    }
+    
+    /* Header */
+    header {
+      margin-bottom: 36px;
+    }
+    
+    h1 {
+      font-size: 20px;
+      margin: 0 0 12px 0;
+    }
+    
+    header > div {
+      margin-top: 6px;
+    }
+    
+    h2 {
+      margin-top: 24px;
+      border-bottom: 1px solid #e5e7eb;
+      padding-bottom: 4px;
+    }
+    
+    h3 {
+      margin-top: 20px;
+    }
+    
+    /* Cards and grid layout */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+    
+    .card {
+      border: 1px solid #e5e7eb;
+      padding: 12px;
+      background: #fff;
+    }
+    
+    .card > strong {
+      display: block;
+      margin-bottom: 8px;
+    }
+    
+    .card > div {
+      margin: 6px 0;
+    }
+    
+    .card small {
+      display: block;
+      margin-top: 6px;
+    }
+    
+    .warn {
+      border-left: 4px solid #f59e0b;
+    }
+    
+    .rec {
+      border-left: 4px solid #10b981;
+    }
+    
+    .info {
+      border-left: 4px solid #3b82f6;
+    }
+    
+    /* Tables */
+    .table-wrap {
+      margin: 8px 0;
+      overflow: hidden;
+    }
+    
+    table {
+      border-collapse: collapse;
+      border-spacing: 0;
+      width: 100%;
+    }
+    
+    th, td {
+      border: 1px solid #9ca3af;
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+    
+    thead th {
+      background: #f3f4f6;
+      font-weight: 600;
+      border-bottom: 2px solid #9ca3af;
+    }
+    
+    tbody tr:nth-child(even) {
+      background: #fcfcfd;
+    }
+    
+    tbody tr:hover {
+      background: #f8fafc;
+    }
+    
+    /* Table row limiting */
+    .table-wrap.collapsed tbody tr:nth-child(n+11) {
+      display: none;
+    }
+    
+    /* Table controls */
+    .table-tools {
+      margin: 12px 0 0;
+      display: flex;
+      justify-content: flex-end;
+      padding: 0;
+    }
+    
+    .toggle-rows {
+      background: #fff;
+      border: 1px solid #d1d5db;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    
+    .toggle-rows:hover {
+      background: #f9fafb;
+    }
+    
+    /* Query display */
+    pre {
+      white-space: pre-wrap;
+      max-height: 8em;
+      overflow: auto;
+      margin: 0;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      padding: 8px;
+    }
+    
+    pre.query.expanded {
+      max-height: none;
+    }
+    
+    .query-short {
+      display: block;
+      max-height: 4em;
+      overflow: hidden;
+    }
+    
+    .query-full {
+      display: none;
+    }
+    
+    .show-full {
+      background: #fff;
+      border: 1px solid #d1d5db;
+      padding: 2px 6px;
+      margin-top: 6px;
+      cursor: pointer;
+    }
+    
+    /* Plan advice */
+    .plan-advice {
+      margin-top: 8px;
+      padding: 8px;
+      border: 1px solid #e5e7eb;
+      background: #f9fafb;
+    }
+    
+    .plan-advice h4 {
+      margin: 0 0 6px;
+      font-size: 14px;
+    }
+    
+    .plan-advice ul {
+      margin: 6px 0 8px 18px;
+    }
+    
+    .show-plan {
+      background: #fff;
+      border: 1px solid #d1d5db;
+      padding: 2px 6px;
+      margin-top: 6px;
+      cursor: pointer;
+    }
+    
+    .plan-pre {
+      white-space: pre-wrap;
+      max-height: 12em;
+      overflow: auto;
+      margin: 6px 0 0;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      padding: 8px;
+    }
+    
+    .plan-pre.expanded {
+      max-height: none;
+    }
+    
+    /* Utility classes */
+    .hot {
+      background: #fff7ed;
+    }
+    
+    .muted {
+      color: #6b7280;
+    }
+    
+    .nowrap {
+      white-space: nowrap;
+    }
+    
+    .section-note {
+      margin: 8px 0 0;
+      color: #4b5563;
+    }
+    
+    .badge-attn {
+      display: inline-block;
+      background: #fef3c7;
+      color: #92400e;
+      border: 1px solid #fcd34d;
+      padding: 2px 6px;
+      font-size: 12px;
+      border-radius: 4px;
+    }
+    
+    code {
+      background: #f3f4f6;
+      padding: 2px 4px;
+    }
+    
+    small {
+      font-size: 12px;
+      color: #4b5563;
+    }
   </style>
   </head>
 <body>
@@ -657,61 +850,73 @@ const htmlTemplate = `<!doctype html>
   <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
   <script>
-  (function(){
-    // Initialize query states on page load
-    document.addEventListener('DOMContentLoaded', function(){
-      var fullEls = document.querySelectorAll('.query-full');
-      for(var i = 0; i < fullEls.length; i++){
-        fullEls[i].style.display = 'none';
-      }
-    });
-    
-    document.addEventListener('click', function(e){
-      var btn;
-      var el = (e.target && e.target.nodeType === 1) ? e.target : (e.target && e.target.parentElement);
-      // Toggle rows (Show all / Show less)
-      btn = el && el.closest && el.closest('.toggle-rows');
-      if(btn){
-    		e.preventDefault();
-        var wrap = btn.closest('.table-wrap');
-        if(!wrap) return;
-        wrap.classList.toggle('collapsed');
-        btn.textContent = wrap.classList.contains('collapsed') ? 'Show all' : 'Show less';
-        return;
-      }
-      // Toggle query text (Show full / Show less)
-      btn = el && el.closest && el.closest('.show-full');
-      if (btn) {
-    		e.preventDefault();
-        var td = btn.closest('td');
-        if(!td) return;
-        var shortEl = td.querySelector('.query-short');
-        var fullEl = td.querySelector('.query-full');
-    		var pre = td.querySelector('pre.query');
-        if(!shortEl || !fullEl) return;
-        var expanded = fullEl.style.display === 'block';
-        fullEl.style.display = expanded ? 'none' : 'block';
-        shortEl.style.display = expanded ? 'block' : 'none';
-				if(pre){ pre.classList.toggle('expanded', !expanded); }
-				btn.textContent = expanded ? 'Show full' : 'Show less';
-        return;
-      }
-      // Toggle plan visibility (Show plan / Hide plan)
-      btn = el && el.closest && el.closest('.show-plan');
-      if (btn) {
-    		e.preventDefault();
-        var card = btn.closest('.plan-advice');
-        if(!card) return;
-        var pre = card.querySelector('.plan-pre');
-        if(!pre) return;
-        var expanded = pre.style.display === 'block';
-				pre.style.display = expanded ? 'none' : 'block';
-				pre.classList.toggle('expanded', !expanded);
-				btn.textContent = expanded ? 'Show plan' : 'Hide plan';
-        return;
-      }
-    });
-  })();
+    (function() {
+      // Initialize query states on page load
+      document.addEventListener('DOMContentLoaded', function() {
+        var fullEls = document.querySelectorAll('.query-full');
+        for (var i = 0; i < fullEls.length; i++) {
+          fullEls[i].style.display = 'none';
+        }
+      });
+      
+      // Handle all interactive button clicks
+      document.addEventListener('click', function(e) {
+        var target = e.target;
+        
+        // Toggle table rows (Show all / Show less)
+        if (target.classList && target.classList.contains('toggle-rows')) {
+          e.preventDefault();
+          var wrap = target.parentElement.parentElement;
+          if (!wrap || !wrap.classList) return;
+          
+          wrap.classList.toggle('collapsed');
+          target.textContent = wrap.classList.contains('collapsed') 
+            ? 'Show all' 
+            : 'Show less';
+          return;
+        }
+        
+        // Toggle query text (Show full / Show less)
+        if (target.classList && target.classList.contains('show-full')) {
+          e.preventDefault();
+          var td = target.parentElement;
+          if (!td) return;
+          
+          var shortEl = td.querySelector('.query-short');
+          var fullEl = td.querySelector('.query-full');
+          var pre = td.querySelector('pre.query');
+          if (!shortEl || !fullEl) return;
+          
+          var expanded = fullEl.style.display === 'block';
+          fullEl.style.display = expanded ? 'none' : 'block';
+          shortEl.style.display = expanded ? 'block' : 'none';
+          
+          if (pre) {
+            pre.classList.toggle('expanded', !expanded);
+          }
+          
+          target.textContent = expanded ? 'Show full' : 'Show less';
+          return;
+        }
+        
+        // Toggle plan visibility (Show plan / Hide plan)
+        if (target.classList && target.classList.contains('show-plan')) {
+          e.preventDefault();
+          var card = target.parentElement;
+          if (!card) return;
+          
+          var pre = card.querySelector('.plan-pre');
+          if (!pre) return;
+          
+          var expanded = pre.style.display === 'block';
+          pre.style.display = expanded ? 'none' : 'block';
+          pre.classList.toggle('expanded', !expanded);
+          
+          target.textContent = expanded ? 'Show plan' : 'Hide plan';
+          return;
+        }
+      });
+    })();
   </script>
 </body>
 </html>`
