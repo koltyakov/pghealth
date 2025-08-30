@@ -589,18 +589,18 @@
           {{if $.ShowDBIndexCounts}}<td>{{.Database}}</td>{{end}}
           <td>{{.Schema}}</td>
           <td>{{.Name}}</td>
-          <td{{if eq .IndexCount 0}} class="badge-attn"{{end}}>{{.IndexCount}}</td>
-            <td>{{fmtBytes .SizeBytes}}</td>
-            <td>{{fmtThousands .RowCount}}</td>
-            <td>{{fmtThousands .DeadRows}}</td>
-            <td>{{printf "%.1f" .BloatPct}}%</td>
-            </tr>
-            {{end}}
-            {{else}}
-            <tr>
-              {{if .ShowDBIndexCounts}}<td colspan="8" class="muted">No data</td>{{else}}<td colspan="7" class="muted">No data</td>{{end}}
-            </tr>
-            {{end}}
+          <td>{{.IndexCount}}</td>
+          <td>{{fmtBytes .SizeBytes}}</td>
+          <td>{{fmtThousands .RowCount}}</td>
+          <td>{{fmtThousands .DeadRows}}</td>
+          <td>{{printf "%.1f" .BloatPct}}%</td>
+          </tr>
+          {{end}}
+          {{else}}
+          <tr>
+            {{if .ShowDBIndexCounts}}<td colspan="8" class="muted">No data</td>{{else}}<td colspan="7" class="muted">No data</td>{{end}}
+          </tr>
+          {{end}}
       </tbody>
     </table>
   {{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
