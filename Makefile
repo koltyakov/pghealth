@@ -1,7 +1,7 @@
 # Simple Makefile for pghealth
 
 GO ?= go
-PKG := ./cmd/pghealth
+PKG := ./
 BIN_DIR := bin
 BIN := $(BIN_DIR)/pghealth
 
