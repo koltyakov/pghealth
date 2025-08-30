@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/koltyakov/pghealth/internal/collect"
@@ -85,44 +86,56 @@ func WritePrompt(htmlOutPath string, res collect.Result, meta collect.Meta) (str
 		}
 		pd.Queries = append(pd.Queries, pq)
 	}
-	// Include top queries by total time and by calls; dedupe on exact text
-	seenQ := make(map[string]struct{})
-	queriesAdded := 0
-	for _, s := range res.Statements.TopByTotalTime {
+	// Build a unified, deduped list across top-by-time and top-by-calls
+	type qwrap struct{ s collect.Statement }
+	uniq := map[string]qwrap{}
+	insertOrPromote := func(s collect.Statement) {
 		qt := strings.TrimSpace(s.Query)
 		if qt == "" {
-			continue
+			return
 		}
-		if _, ok := seenQ[qt]; ok {
-			continue
+		if existing, ok := uniq[qt]; ok {
+			// prefer one with advice; otherwise higher total time, then higher calls
+			if (s.Advice != nil && existing.s.Advice == nil) ||
+				(existing.s.Advice != nil && s.Advice != nil && s.TotalTime > existing.s.TotalTime) ||
+				(existing.s.Advice == nil && s.TotalTime > existing.s.TotalTime) ||
+				(s.TotalTime == existing.s.TotalTime && s.Calls > existing.s.Calls) {
+				uniq[qt] = qwrap{s: s}
+			}
+			return
 		}
-		addQuery(s)
-		if _, ok := seenQ[qt]; !ok {
-			seenQ[qt] = struct{}{}
-		}
-		if len(pd.Queries) > queriesAdded {
-			queriesAdded++
-		}
-		if queriesAdded >= 25 {
-			break
-		}
+		uniq[qt] = qwrap{s: s}
+	}
+	for _, s := range res.Statements.TopByTotalTime {
+		insertOrPromote(s)
 	}
 	for _, s := range res.Statements.TopByCalls {
-		qt := strings.TrimSpace(s.Query)
-		if qt == "" {
-			continue
+		insertOrPromote(s)
+	}
+	// Convert to slice and sort: NeedsAttention first, then by TotalTime desc, then Calls desc
+	list := make([]collect.Statement, 0, len(uniq))
+	for _, w := range uniq {
+		list = append(list, w.s)
+	}
+	// custom sort
+	sort.SliceStable(list, func(i, j int) bool {
+		ai, aj := list[i], list[j]
+		if ai.NeedsAttention != aj.NeedsAttention {
+			return ai.NeedsAttention && !aj.NeedsAttention
 		}
-		if _, ok := seenQ[qt]; ok {
-			continue
+		if ai.TotalTime != aj.TotalTime {
+			return ai.TotalTime > aj.TotalTime
 		}
+		return ai.Calls > aj.Calls
+	})
+	// Add up to cap
+	added := 0
+	for _, s := range list {
 		addQuery(s)
-		if _, ok := seenQ[qt]; !ok {
-			seenQ[qt] = struct{}{}
+		if len(pd.Queries) > added {
+			added++
 		}
-		if len(pd.Queries) > queriesAdded {
-			queriesAdded++
-		}
-		if queriesAdded >= 25 {
+		if added >= 25 {
 			break
 		}
 	}

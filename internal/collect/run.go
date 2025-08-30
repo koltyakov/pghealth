@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -305,6 +306,9 @@ type ExtensionStat struct {
 	Description string
 	Schema      string
 }
+
+// defaultExplainTop is the per-list fallback when --explain-top is not provided
+const defaultExplainTop = 10
 
 func Run(ctx context.Context, cfg Config) (Result, error) {
 	var res Result
@@ -670,39 +674,76 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		}
 	}
 
-	// Best-effort EXPLAIN plan collection for heavy queries (safe subset), unified across lists
-	remaining := cfg.ExplainTop
-	if remaining <= 0 {
-		remaining = 10
-	}
-	seen := make(map[string]bool) // dedupe across lists by exact trimmed text
+	// Best-effort EXPLAIN plan collection per list (slowest and most frequent), each up to cfg.ExplainTop
+	reParam := regexp.MustCompile(`\$\d+`)
 	collectAdvice := func(sts []Statement) []Statement {
-		if remaining <= 0 {
+		limit := cfg.ExplainTop
+		if limit < 0 {
+			limit = defaultExplainTop
+		}
+		if len(sts) == 0 {
 			return sts
 		}
-		for i := 0; i < len(sts) && remaining > 0; i++ {
-			// EXPLAIN in the current DB context only (statements collected from current DB)
-			q := sts[i].Query
-			qTrim := strings.TrimSpace(q)
-			if qTrim == "" || seen[qTrim] {
+		seenLocal := make(map[string]bool)
+		taken := 0
+		extraSuspectTaken := 0
+		const extraSuspectCap = 5
+		isSuspect := func(s Statement) bool {
+			// Heuristics before plan: clearly slow or moderately slow and very frequent
+			if s.MeanTime >= 20.0 {
+				return true
+			}
+			if s.MeanTime >= 5.0 && s.Calls >= 1000 {
+				return true
+			}
+			return false
+		}
+		for i := 0; i < len(sts) && (taken < limit || extraSuspectTaken < extraSuspectCap); i++ {
+			qTrim := strings.TrimSpace(sts[i].Query)
+			if qTrim == "" || seenLocal[qTrim] {
 				continue
 			}
+			seenLocal[qTrim] = true
 			qUp := strings.ToUpper(qTrim)
-			// Safe subset only: restrict to plain SELECT without parameters
-			if !strings.HasPrefix(qUp, "SELECT") {
-				seen[qTrim] = true // mark as considered to avoid retry in another list
+			// Safe subset only: allow SELECT and WITH (CTE) queries
+			if !(strings.HasPrefix(qUp, "SELECT") || strings.HasPrefix(qUp, "WITH")) {
 				continue
 			}
-			if strings.Contains(qTrim, "$1") || strings.Contains(qTrim, "$2") || strings.Contains(qTrim, "$") {
-				seen[qTrim] = true
+			suspect := isSuspect(sts[i])
+			if taken >= limit && !suspect {
+				// no room in main budget and not suspect -> skip
 				continue
 			}
-			// Run EXPLAIN safely with short timeout
-			ctxPlan, cancel := context.WithTimeout(ctx, 2*time.Second)
-			planRows, err := conn.Query(ctxPlan, "EXPLAIN "+qTrim)
-			cancel()
+			var planRows pgx.Rows
+			var err error
+			// Parameterized query path: use PREPARE/EXPLAIN EXECUTE to avoid brittle substitutions
+			if strings.Contains(qTrim, "$") {
+				prepName := fmt.Sprintf("__pghealth_prep_%d", i)
+				ctxPrep, cancelPrep := context.WithTimeout(ctx, 3*time.Second)
+				_, errPrep := conn.Exec(ctxPrep, "PREPARE "+prepName+" AS "+qTrim)
+				cancelPrep()
+				if errPrep == nil {
+					ctxPlan, cancel := context.WithTimeout(ctx, 5*time.Second)
+					planRows, err = conn.Query(ctxPlan, "EXPLAIN EXECUTE "+prepName)
+					cancel()
+					// cleanup
+					ctxDel, cancelDel := context.WithTimeout(ctx, 1*time.Second)
+					_, _ = conn.Exec(ctxDel, "DEALLOCATE "+prepName)
+					cancelDel()
+				} else {
+					// Fallback: replace parameters with NULL for a generic plan
+					qForExplain := reParam.ReplaceAllString(qTrim, "NULL")
+					ctxPlan, cancel := context.WithTimeout(ctx, 5*time.Second)
+					planRows, err = conn.Query(ctxPlan, "EXPLAIN "+qForExplain)
+					cancel()
+				}
+			} else {
+				// Non-parameterized
+				ctxPlan, cancel := context.WithTimeout(ctx, 5*time.Second)
+				planRows, err = conn.Query(ctxPlan, "EXPLAIN "+qTrim)
+				cancel()
+			}
 			if err != nil {
-				seen[qTrim] = true
 				continue
 			}
 			var planLines []string
@@ -845,9 +886,12 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			if advice.Plan != "" || len(advice.Suggestions) > 0 || len(advice.Highlights) > 0 {
 				sts[i].Advice = advice
 				sts[i].NeedsAttention = true
-				remaining--
+				if taken < limit {
+					taken++
+				} else if extraSuspectTaken < extraSuspectCap {
+					extraSuspectTaken++
+				}
 			}
-			seen[qTrim] = true
 		}
 		return sts
 	}
