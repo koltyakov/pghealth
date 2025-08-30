@@ -208,8 +208,9 @@ const htmlTemplate = `<!doctype html>
   <title>PostgreSQL Health Check Report</title>
   <style>
     body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin:24px; color:#111827;}
-    header{margin-bottom:16px}
-    h1{font-size:20px;margin:0}
+  header{margin-bottom:24px}
+  h1{font-size:20px;margin:0 0 8px 0}
+  header > div{margin-top:4px}
     h2{margin-top:24px;border-bottom:1px solid #e5e7eb;padding-bottom:4px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
   .card{border:1px solid #e5e7eb;padding:12px;background:#fff}
@@ -281,7 +282,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Activity) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Activity) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Databases</h2>
@@ -296,7 +297,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Top tables by rows</h2>
@@ -311,7 +312,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Top tables by size</h2>
@@ -326,7 +327,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Settings (subset)</h2>
@@ -341,7 +342,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Indexes (unused candidates)</h2>
@@ -356,7 +357,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h2>Tables with lowest index usage</h2>
@@ -371,7 +372,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   
@@ -394,7 +395,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   <h3>Connections by client</h3>
@@ -413,7 +414,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
 
   {{if .Res.Extensions.PgStatStatements}}
@@ -425,7 +426,7 @@ const htmlTemplate = `<!doctype html>
     {{if .Res.Statements.TopByTotalTime}}
   {{range $i, $q := .Res.Statements.TopByTotalTime}}<tr class="{{if lt $i 3}}hot{{end}}"><td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
         <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
-        <button class="show-full">Show full</button>
+  <button type="button" class="show-full">Show full</button>
         {{if $q.Advice}}
         <div class="plan-advice">
           {{if $q.Advice.Highlights}}
@@ -442,7 +443,7 @@ const htmlTemplate = `<!doctype html>
           {{end}}
           {{if $q.Advice.Plan}}
             <pre class="plan-pre" style="display:none">{{$q.Advice.Plan}}</pre>
-            <button class="show-plan">Show plan</button>
+            <button type="button" class="show-plan">Show plan</button>
           {{end}}
         </div>
         {{end}}
@@ -451,7 +452,7 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
     </tbody>
-  </table>{{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
+  </table>{{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
 
   
 
@@ -463,13 +464,13 @@ const htmlTemplate = `<!doctype html>
     {{if .Res.Statements.TopByCalls}}
   {{range $i, $q := .Res.Statements.TopByCalls}}<tr class="{{if lt $i 3}}hot{{end}}"><td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
         <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
-        <button class="show-full">Show full</button>
+  <button type="button" class="show-full">Show full</button>
       </td></tr>{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
     </tbody>
-  </table>{{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
+  </table>{{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
   {{else}}
   <p>pg_stat_statements is not enabled in this database. Install and preload it for detailed query insights.</p>
   {{end}}
@@ -485,7 +486,7 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="7" class="muted">No blocking detected</td></tr>
     {{end}}
     </tbody>
-  </table>{{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
+  </table>{{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <h2>Long running queries (> 5m)</h2>
   <div class="table-wrap collapsed">
@@ -498,7 +499,7 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="5" class="muted">No long running queries</td></tr>
     {{end}}
     </tbody>
-  </table>{{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
+  </table>{{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <h2>Autovacuum activities</h2>
   <div class="table-wrap collapsed">
@@ -511,16 +512,17 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="6" class="muted">No autovacuum workers</td></tr>
     {{end}}
     </tbody>
-  </table>{{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button class="toggle-rows">Show all</button></div>{{end}}</div>
+  </table>{{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
 
   <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
   <script>
   (function(){
-  document.addEventListener('click', function(e){
+    document.addEventListener('click', function(e){
       var btn;
+      var el = (e.target && e.target.nodeType === 1) ? e.target : (e.target && e.target.parentElement);
       // Toggle rows (Show all / Show less)
-      btn = e.target && e.target.closest && e.target.closest('.toggle-rows');
+      btn = el && el.closest && el.closest('.toggle-rows');
       if(btn){
     e.preventDefault();
         var wrap = btn.closest('.table-wrap');
@@ -530,7 +532,7 @@ const htmlTemplate = `<!doctype html>
         return;
       }
       // Toggle query text (Show full / Show less)
-      btn = e.target && e.target.closest && e.target.closest('.show-full');
+      btn = el && el.closest && el.closest('.show-full');
       if(btn){
     e.preventDefault();
         var td = btn.closest('td');
@@ -547,7 +549,7 @@ const htmlTemplate = `<!doctype html>
         return;
       }
       // Toggle plan visibility (Show plan / Hide plan)
-      btn = e.target && e.target.closest && e.target.closest('.show-plan');
+      btn = el && el.closest && el.closest('.show-plan');
       if(btn){
     e.preventDefault();
         var card = btn.closest('.plan-advice');
