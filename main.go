@@ -77,6 +77,7 @@ type Flags struct {
 	Open     bool
 	Stats    string
 	Suppress string
+	DBs      string
 }
 
 func (f Flags) ToCollectorConfig() collect.Config {
@@ -84,6 +85,7 @@ func (f Flags) ToCollectorConfig() collect.Config {
 		URL:        f.URL,
 		Timeout:    f.Timeout,
 		StatsSince: f.Stats,
+		DBs:        splitCSV(f.DBs),
 	}
 }
 
@@ -96,6 +98,7 @@ func parseFlags() Flags {
 	flag.DurationVar(&f.Timeout, "timeout", 30*time.Second, "Overall timeout")
 	flag.BoolVar(&f.Open, "open", true, "Open the report after generation")
 	flag.StringVar(&f.Stats, "stats", "", "Collect pg_stat_statements data since this duration (e.g. '24h', '7d')")
+	flag.StringVar(&f.DBs, "dbs", "", "Comma-separated database names to extend metrics from (tables/indexes sections will include a Database column)")
 	flag.StringVar(&f.Suppress, "suppress", "", "Comma-separated recommendation codes to suppress (e.g. install-pgss,large-unused-indexes; also accepts title slugs)")
 	showVersion := flag.Bool("version", false, "Show version and exit")
 	flag.Parse()
@@ -189,6 +192,21 @@ func parseSuppressedSet(list string) map[string]struct{} {
 		m[slugify(code)] = struct{}{}
 	}
 	return m
+}
+
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		v := strings.TrimSpace(p)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // expandOutPlaceholders replaces {ts} in the output path.

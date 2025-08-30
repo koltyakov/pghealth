@@ -333,7 +333,7 @@
         </tr>{{end}}
         {{else}}
         <tr>
-          <td colspan="3" class="muted">No data</td>
+          {{if .ShowDBTablesByRows}}<td colspan="4" class="muted">No data</td>{{else}}<td colspan="3" class="muted">No data</td>{{end}}
         </tr>
         {{end}}
       </tbody>
@@ -417,6 +417,7 @@
     <table>
       <thead>
         <tr>
+          {{if .ShowDBTablesByRows}}<th>Database</th>{{end}}
           <th>Schema</th>
           <th>Table</th>
           <th>Rows</th>
@@ -425,13 +426,14 @@
       <tbody>
         {{if .TablesByRows}}
         {{range $i, $t := .TablesByRows}}{{if lt $i 100}}<tr>
+          {{if $.ShowDBTablesByRows}}<td>{{$t.Database}}</td>{{end}}
           <td>{{$t.Schema}}</td>
           <td>{{$t.Name}}</td>
           <td>{{fmtI64 $t.NLiveTup}}</td>
         </tr>{{end}}{{end}}
         {{else}}
         <tr>
-          <td colspan="3" class="muted">No data</td>
+          {{if .ShowDBTablesBySize}}<td colspan="4" class="muted">No data</td>{{else}}<td colspan="3" class="muted">No data</td>{{end}}
         </tr>
         {{end}}
       </tbody>
@@ -446,6 +448,7 @@
     <table>
       <thead>
         <tr>
+          {{if .ShowDBTablesBySize}}<th>Database</th>{{end}}
           <th>Schema</th>
           <th>Table</th>
           <th>Size</th>
@@ -454,6 +457,7 @@
       <tbody>
         {{if .TablesBySize}}
         {{range $i, $t := .TablesBySize}}{{if lt $i 100}}<tr>
+          {{if $.ShowDBTablesBySize}}<td>{{$t.Database}}</td>{{end}}
           <td>{{$t.Schema}}</td>
           <td>{{$t.Name}}</td>
           <td>{{fmtBytes $t.SizeBytes}}</td>
@@ -476,6 +480,7 @@
     <table>
       <thead>
         <tr>
+          {{if .ShowDBIndexUnused}}<th>Database</th>{{end}}
           <th>Schema</th>
           <th>Table</th>
           <th>Index</th>
@@ -484,6 +489,7 @@
       </thead>
       <tbody>
         {{range .Res.IndexUnused}}<tr>
+          {{if $.ShowDBIndexUnused}}<td>{{.Database}}</td>{{end}}
           <td>{{.Schema}}</td>
           <td>{{.Table}}</td>
           <td>{{.Name}}</td>
@@ -501,6 +507,7 @@
     <table>
       <thead>
         <tr>
+          {{if .ShowDBIndexUsageLow}}<th>Database</th>{{end}}
           <th>Schema</th>
           <th>Table</th>
           <th>Index usage</th>
@@ -510,6 +517,7 @@
       <tbody>
         {{if .Res.IndexUsageLow}}
         {{range .Res.IndexUsageLow}}<tr>
+          {{if $.ShowDBIndexUsageLow}}<td>{{.Database}}</td>{{end}}
           <td>{{.Schema}}</td>
           <td>{{.Table}}</td>
           <td>{{fmtF2 .IndexUsagePct}}%</td>
@@ -517,7 +525,7 @@
         </tr>{{end}}
         {{else}}
         <tr>
-          <td colspan="4" class="muted">No data</td>
+          {{if .ShowDBIndexUsageLow}}<td colspan="5" class="muted">No data</td>{{else}}<td colspan="4" class="muted">No data</td>{{end}}
         </tr>
         {{end}}
       </tbody>
@@ -533,6 +541,7 @@
     <table>
       <thead>
         <tr>
+          {{if .ShowDBLargeUnused}}<th>Database</th>{{end}}
           <th>Schema</th>
           <th>Table</th>
           <th>Index</th>
@@ -540,8 +549,9 @@
         </tr>
       </thead>
       <tbody>
-        {{range .LargeUnused}}
+  {{range .LargeUnused}}
         <tr>
+          {{if $.ShowDBLargeUnused}}<td>{{.Database}}</td>{{end}}
           <td>{{.Schema}}</td>
           <td>{{.Table}}</td>
           <td>{{.Name}}</td>
@@ -562,6 +572,7 @@
     <table>
       <thead>
         <tr>
+          {{if .ShowDBIndexCounts}}<th>Database</th>{{end}}
           <th>Schema</th>
           <th>Table</th>
           <th>Index Count</th>
@@ -574,6 +585,7 @@
         {{if .Res.TablesWithIndexCount}}
         {{range .Res.TablesWithIndexCount}}
         <tr{{if gt .BloatPct 20.0}} class="hot" {{end}}>
+          {{if $.ShowDBIndexCounts}}<td>{{.Database}}</td>{{end}}
           <td>{{.Schema}}</td>
           <td>{{.Name}}</td>
           <td{{if eq .IndexCount 0}} class="badge-attn" {{end}}>{{.IndexCount}}</td>
@@ -584,7 +596,7 @@
             {{end}}
             {{else}}
             <tr>
-              <td colspan="6" class="muted">No data</td>
+              {{if .ShowDBIndexCounts}}<td colspan="7" class="muted">No data</td>{{else}}<td colspan="6" class="muted">No data</td>{{end}}
             </tr>
             {{end}}
       </tbody>
@@ -603,8 +615,8 @@
     .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
   <div id="table-queries-total-time" class="table-wrap collapsed">
     <table>
-      <thead>
-        <tr>
+    <thead>
+  <tr>
           <th>Calls</th>
           <th>Calls/hr</th>
           <th>Total time</th>
@@ -616,7 +628,7 @@
       <tbody>
         {{if .Res.Statements.TopByTotalTime}}
         {{range $i, $q := .Res.Statements.TopByTotalTime}}
-        <tr class="{{if lt $i 3}}hot{{end}}">
+  <tr class="{{if lt $i 3}}hot{{end}}">
           <td class="nowrap">{{fmtF0 $q.Calls}}</td>
           <td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td>
           <td class="nowrap">{{fmtMs $q.TotalTime}}</td>
@@ -667,8 +679,8 @@
     .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
   <div id="table-queries-calls" class="table-wrap collapsed">
     <table>
-      <thead>
-        <tr>
+    <thead>
+  <tr>
           <th>Calls</th>
           <th>Calls/hr</th>
           <th>Total time</th>
@@ -680,7 +692,7 @@
       <tbody>
         {{if .Res.Statements.TopByCalls}}
         {{range $i, $q := .Res.Statements.TopByCalls}}
-        <tr class="{{if lt $i 3}}hot{{end}}">
+  <tr class="{{if lt $i 3}}hot{{end}}">
           <td class="nowrap">{{fmtF0 $q.Calls}}</td>
           <td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td>
           <td class="nowrap">{{fmtMs $q.TotalTime}}</td>

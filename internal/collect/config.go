@@ -5,7 +5,8 @@ import "time"
 type Config struct {
 	URL        string
 	Timeout    time.Duration
-	StatsSince string `json:"stats_since" yaml:"stats_since"`
+	StatsSince string   `json:"stats_since" yaml:"stats_since"`
+	DBs        []string `json:"dbs" yaml:"dbs"`
 }
 
 type Meta struct {

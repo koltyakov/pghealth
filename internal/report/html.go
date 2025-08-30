@@ -55,16 +55,18 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	largeUnusedMap := make(map[string]collect.IndexUnused)
 	for _, iu := range res.IndexUnused {
 		if iu.SizeBytes > 100*1024*1024 { // >100MB
-			key := iu.Schema + "." + iu.Name
+			dbPart := strings.TrimSpace(iu.Database)
+			key := dbPart + "|" + iu.Schema + "." + iu.Name
 			largeUnusedMap[key] = iu
 		}
 	}
 	// Also consider index bloat stats where scans=0 and size >100MB
 	for _, ib := range res.IndexBloatStats {
 		if ib.Scans == 0 && ib.WastedBytes > 100*1024*1024 {
-			key := ib.Schema + "." + ib.Name
+			dbPart := strings.TrimSpace(res.ConnInfo.CurrentDB)
+			key := dbPart + "|" + ib.Schema + "." + ib.Name
 			if _, ok := largeUnusedMap[key]; !ok {
-				largeUnusedMap[key] = collect.IndexUnused{Schema: ib.Schema, Table: ib.Table, Name: ib.Name, SizeBytes: ib.WastedBytes}
+				largeUnusedMap[key] = collect.IndexUnused{Database: res.ConnInfo.CurrentDB, Schema: ib.Schema, Table: ib.Table, Name: ib.Name, SizeBytes: ib.WastedBytes}
 			}
 		}
 	}
@@ -73,6 +75,52 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		largeUnused = append(largeUnused, v)
 	}
 	sort.Slice(largeUnused, func(i, j int) bool { return largeUnused[i].SizeBytes > largeUnused[j].SizeBytes })
+
+	// Whether to show Database column in various sections
+	showDBTablesByRows := false
+	for _, t := range tablesByRows {
+		if strings.TrimSpace(t.Database) != "" {
+			showDBTablesByRows = true
+			break
+		}
+	}
+	showDBTablesBySize := false
+	for _, t := range tablesBySize {
+		if strings.TrimSpace(t.Database) != "" {
+			showDBTablesBySize = true
+			break
+		}
+	}
+	showDBIndexUnused := false
+	for _, iu := range res.IndexUnused {
+		if strings.TrimSpace(iu.Database) != "" {
+			showDBIndexUnused = true
+			break
+		}
+	}
+	showDBLargeUnused := false
+	for _, iu := range largeUnused {
+		if strings.TrimSpace(iu.Database) != "" {
+			showDBLargeUnused = true
+			break
+		}
+	}
+	showDBIndexUsageLow := false
+	for _, iu := range res.IndexUsageLow {
+		if strings.TrimSpace(iu.Database) != "" {
+			showDBIndexUsageLow = true
+			break
+		}
+	}
+	showDBIndexCounts := false
+	for _, ic := range res.TablesWithIndexCount {
+		if strings.TrimSpace(ic.Database) != "" {
+			showDBIndexCounts = true
+			break
+		}
+	}
+
+	// Top queries are not shown with DB scope
 
 	// Filter connections activity to hide empty database/state entries and zero counts
 	activity := make([]collect.Activity, 0, len(res.Activity))
@@ -261,14 +309,20 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		return err
 	}
 	data := struct {
-		Res          collect.Result
-		A            analyze.Analysis
-		Meta         collect.Meta
-		ShowHostname bool
-		Activity     []collect.Activity
-		TablesByRows []collect.TableStat
-		TablesBySize []collect.TableStat
-		LargeUnused  []collect.IndexUnused
+		Res                 collect.Result
+		A                   analyze.Analysis
+		Meta                collect.Meta
+		ShowHostname        bool
+		Activity            []collect.Activity
+		TablesByRows        []collect.TableStat
+		TablesBySize        []collect.TableStat
+		LargeUnused         []collect.IndexUnused
+		ShowDBTablesByRows  bool
+		ShowDBTablesBySize  bool
+		ShowDBIndexUnused   bool
+		ShowDBLargeUnused   bool
+		ShowDBIndexUsageLow bool
+		ShowDBIndexCounts   bool
 		// summaries
 		ConnSummary        string
 		DBsSummary         string
@@ -281,6 +335,7 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		LongRunningSummary string
 		AutovacSummary     string
 	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize, LargeUnused: largeUnused,
+		ShowDBTablesByRows: showDBTablesByRows, ShowDBTablesBySize: showDBTablesBySize, ShowDBIndexUnused: showDBIndexUnused, ShowDBLargeUnused: showDBLargeUnused, ShowDBIndexUsageLow: showDBIndexUsageLow, ShowDBIndexCounts: showDBIndexCounts,
 		ConnSummary: connSummary, DBsSummary: dbsSummary, CacheHitsSummary: cacheHitsSummary, IndexUnusedSummary: indexUnusedSummary, LargeUnusedSummary: largeUnusedSummary,
 		IndexUsageSummary: indexUsageSummary, ClientsSummary: clientsSummary, BlockingSummary: blockingSummary, LongRunningSummary: longRunningSummary, AutovacSummary: autovacSummary}
 	return tmpl.Execute(f, data)

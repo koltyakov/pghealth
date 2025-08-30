@@ -84,6 +84,7 @@ type Setting struct {
 }
 
 type TableStat struct {
+	Database  string
 	Schema    string
 	Name      string
 	SeqScans  int64
@@ -95,6 +96,7 @@ type TableStat struct {
 }
 
 type IndexStat struct {
+	Database  string
 	Schema    string
 	Table     string
 	Name      string
@@ -103,6 +105,7 @@ type IndexStat struct {
 }
 
 type IndexUnused struct {
+	Database  string
 	Schema    string
 	Table     string
 	Name      string
@@ -202,6 +205,7 @@ type CacheHit struct {
 }
 
 type IndexUsage struct {
+	Database      string
 	Schema        string
 	Table         string
 	IndexUsagePct float64
@@ -209,6 +213,7 @@ type IndexUsage struct {
 }
 
 type TableIndexCount struct {
+	Database   string
 	Schema     string
 	Name       string
 	IndexCount int
@@ -368,14 +373,18 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// table stats (requires pg_stat_all_tables) with table size
+	// table stats (exclude system schemas) with table size
 	rows, err = conn.Query(ctx, `select schemaname, relname, seq_scan, idx_scan, n_live_tup, n_dead_tup,
-		pg_total_relation_size(format('%I.%I', schemaname, relname)) as size_bytes
-		from pg_stat_all_tables`)
+				pg_total_relation_size(format('%I.%I', schemaname, relname)) as size_bytes
+				from pg_stat_all_tables
+				where schemaname not in ('pg_catalog','information_schema')
+					and schemaname not like 'pg_toast%'
+					and schemaname not like 'pg_temp_%'`)
 	if err == nil {
 		for rows.Next() {
 			var t TableStat
 			_ = rows.Scan(&t.Schema, &t.Name, &t.SeqScans, &t.IdxScans, &t.NLiveTup, &t.NDeadTup, &t.SizeBytes)
+			t.Database = res.ConnInfo.CurrentDB
 			// rough bloat heuristic
 			if t.NLiveTup > 0 {
 				t.BloatPct = float64(t.NDeadTup) / float64(t.NLiveTup+t.NDeadTup) * 100
@@ -383,6 +392,35 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			res.Tables = append(res.Tables, t)
 		}
 		rows.Close()
+		// Backfill any missing user tables from pg_class for coverage
+		present := make(map[string]struct{}, len(res.Tables))
+		for _, t := range res.Tables {
+			if t.Database == res.ConnInfo.CurrentDB {
+				present[t.Schema+"."+t.Name] = struct{}{}
+			}
+		}
+		if rows2, err2 := conn.Query(ctx, `select n.nspname as schemaname,
+				c.relname,
+				coalesce(c.reltuples::bigint, 0) as n_live_tup,
+				pg_total_relation_size(c.oid) as size_bytes
+			from pg_class c
+			join pg_namespace n on n.oid = c.relnamespace
+			where c.relkind in ('r','m','p')
+			  and n.nspname not in ('pg_catalog','information_schema')
+			  and n.nspname not like 'pg_toast%'
+			  and n.nspname not like 'pg_temp_%'`); err2 == nil {
+			for rows2.Next() {
+				var schema, name string
+				var nlive, size int64
+				_ = rows2.Scan(&schema, &name, &nlive, &size)
+				key := schema + "." + name
+				if _, ok := present[key]; ok {
+					continue
+				}
+				res.Tables = append(res.Tables, TableStat{Database: res.ConnInfo.CurrentDB, Schema: schema, Name: name, SeqScans: 0, IdxScans: 0, NLiveTup: nlive, NDeadTup: 0, SizeBytes: size})
+			}
+			rows2.Close()
+		}
 	}
 
 	// Fallback: if no rows (permissions or empty stats), derive from pg_class/pg_namespace
@@ -398,11 +436,14 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			join pg_namespace n on n.oid = c.relnamespace
 			where c.relkind in ('r','m','p')
 			  and n.nspname not in ('pg_catalog','information_schema')
+			  and n.nspname not like 'pg_toast%'
+			  and n.nspname not like 'pg_temp_%'
 			order by size_bytes desc
 			limit 1000`); err == nil {
 			for rows.Next() {
 				var t TableStat
 				_ = rows.Scan(&t.Schema, &t.Name, &t.SeqScans, &t.IdxScans, &t.NLiveTup, &t.NDeadTup, &t.SizeBytes)
+				t.Database = res.ConnInfo.CurrentDB
 				res.Tables = append(res.Tables, t)
 			}
 			rows.Close()
@@ -416,6 +457,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		for rows.Next() {
 			var i IndexStat
 			_ = rows.Scan(&i.Schema, &i.Table, &i.Name, &i.Scans, &i.SizeBytes)
+			i.Database = res.ConnInfo.CurrentDB
 			res.Indexes = append(res.Indexes, i)
 		}
 		rows.Close()
@@ -424,7 +466,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	// unused indexes (idx_scan=0 and size > some threshold)
 	for _, idx := range res.Indexes {
 		if idx.Scans == 0 && idx.SizeBytes > 8*1024*1024 { // >8MB
-			res.IndexUnused = append(res.IndexUnused, IndexUnused{Schema: idx.Schema, Table: idx.Table, Name: idx.Name, SizeBytes: idx.SizeBytes})
+			res.IndexUnused = append(res.IndexUnused, IndexUnused{Database: idx.Database, Schema: idx.Schema, Table: idx.Table, Name: idx.Name, SizeBytes: idx.SizeBytes})
 		}
 	}
 
@@ -432,6 +474,108 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	for _, t := range res.Tables {
 		if t.SeqScans > 1000 && t.IdxScans < 100 { // simple heuristic
 			res.MissingIndexes = append(res.MissingIndexes, MissingIndexHint{Schema: t.Schema, Table: t.Name, Columns: "(unknown)", EstBenefit: "High (heuristic)"})
+		}
+	}
+
+	// If cfg.DBs provided, append per-DB tables/indexes by connecting to each DB
+	if len(cfg.DBs) > 0 {
+		baseURL := cfg.URL
+		for _, db := range cfg.DBs {
+			if db == "" || db == res.ConnInfo.CurrentDB {
+				continue
+			}
+			// Build URL for target DB by replacing current_database()
+			targetURL := baseURL
+			// naive replace: if path component exists, swap last segment; otherwise append
+			// This is a simple heuristic; for complex URLs, users should pass a URL to the target DB directly.
+			if i := strings.LastIndex(targetURL, "/"); i != -1 {
+				targetURL = targetURL[:i+1] + db
+			} else {
+				targetURL += "/" + db
+			}
+			ctxDB, cancelDB := context.WithTimeout(ctx, 10*time.Second)
+			dbConn, err := pgx.Connect(ctxDB, targetURL)
+			cancelDB()
+			if err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("db '%s': %v", db, err))
+				continue
+			}
+			// Collect tables (exclude system schemas)
+			if rows, err := dbConn.Query(ctx, `select schemaname, relname, seq_scan, idx_scan, n_live_tup, n_dead_tup,
+								pg_total_relation_size(format('%I.%I', schemaname, relname)) as size_bytes
+								from pg_stat_all_tables
+								where schemaname not in ('pg_catalog','information_schema')
+									and schemaname not like 'pg_toast%'
+									and schemaname not like 'pg_temp_%'`); err == nil {
+				for rows.Next() {
+					var t TableStat
+					_ = rows.Scan(&t.Schema, &t.Name, &t.SeqScans, &t.IdxScans, &t.NLiveTup, &t.NDeadTup, &t.SizeBytes)
+					t.Database = db
+					if t.NLiveTup > 0 {
+						t.BloatPct = float64(t.NDeadTup) / float64(t.NLiveTup+t.NDeadTup) * 100
+					}
+					res.Tables = append(res.Tables, t)
+				}
+				rows.Close()
+			}
+			// Collect indexes
+			if rows, err := dbConn.Query(ctx, `select s.schemaname, s.relname, s.indexrelname, s.idx_scan, pg_relation_size(format('%I.%I', s.schemaname, s.indexrelname))
+				from pg_stat_all_indexes s`); err == nil {
+				for rows.Next() {
+					var i IndexStat
+					_ = rows.Scan(&i.Schema, &i.Table, &i.Name, &i.Scans, &i.SizeBytes)
+					i.Database = db
+					res.Indexes = append(res.Indexes, i)
+				}
+				rows.Close()
+			}
+			// Derive unused indexes for that DB
+			for _, idx := range res.Indexes {
+				if idx.Database == db && idx.Scans == 0 && idx.SizeBytes > 8*1024*1024 {
+					res.IndexUnused = append(res.IndexUnused, IndexUnused{Database: db, Schema: idx.Schema, Table: idx.Table, Name: idx.Name, SizeBytes: idx.SizeBytes})
+				}
+			}
+
+			// Collect lowest index usage tables for that DB
+			{
+				q := `select schemaname, relname,
+					coalesce(100.0 * idx_scan / nullif(seq_scan + idx_scan, 0), 0.0) as index_usage_pct,
+					n_live_tup
+				  from pg_stat_user_tables
+				  where n_live_tup > 10000
+				  order by index_usage_pct asc nulls last
+				  limit 50`
+				if rows, err := dbConn.Query(ctx, q); err == nil {
+					for rows.Next() {
+						var iu IndexUsage
+						_ = rows.Scan(&iu.Schema, &iu.Table, &iu.IndexUsagePct, &iu.Rows)
+						iu.Database = db
+						res.IndexUsageLow = append(res.IndexUsageLow, iu)
+					}
+					rows.Close()
+				}
+			}
+
+			// Collect tables with index counts for that DB
+			if rows, err := dbConn.Query(ctx, `select t.schemaname, t.relname,
+				count(i.indexrelid) as index_count,
+				pg_total_relation_size(format('%I.%I', t.schemaname, t.relname)) as size_bytes,
+				t.n_live_tup,
+				coalesce(100.0 * t.n_dead_tup / nullif(t.n_live_tup + t.n_dead_tup, 0), 0.0) as bloat_pct
+			from pg_stat_user_tables t
+			left join pg_stat_user_indexes i on i.schemaname = t.schemaname and i.relname = t.relname
+			group by t.schemaname, t.relname, t.n_live_tup, t.n_dead_tup
+			order by size_bytes desc
+			limit 100`); err == nil {
+				for rows.Next() {
+					var tic TableIndexCount
+					_ = rows.Scan(&tic.Schema, &tic.Name, &tic.IndexCount, &tic.SizeBytes, &tic.RowCount, &tic.BloatPct)
+					tic.Database = db
+					res.TablesWithIndexCount = append(res.TablesWithIndexCount, tic)
+				}
+				rows.Close()
+			}
+			dbConn.Close(ctx)
 		}
 	}
 
@@ -524,6 +668,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		// avoid duplicate EXPLAIN for identical queries across lists
 		seen := make(map[string]bool)
 		for i := 0; i < limit; i++ {
+			// EXPLAIN in the current DB context only (statements collected from current DB)
 			q := sts[i].Query
 			qTrim := strings.TrimSpace(q)
 			if seen[qTrim] {
@@ -802,6 +947,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			for rows.Next() {
 				var iu IndexUsage
 				_ = rows.Scan(&iu.Schema, &iu.Table, &iu.IndexUsagePct, &iu.Rows)
+				iu.Database = res.ConnInfo.CurrentDB
 				res.IndexUsageLow = append(res.IndexUsageLow, iu)
 			}
 			rows.Close()
@@ -817,6 +963,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				for rows.Next() {
 					var iu IndexUsage
 					_ = rows.Scan(&iu.Schema, &iu.Table, &iu.IndexUsagePct, &iu.Rows)
+					iu.Database = res.ConnInfo.CurrentDB
 					res.IndexUsageLow = append(res.IndexUsageLow, iu)
 				}
 				rows.Close()
@@ -838,6 +985,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		for rows.Next() {
 			var tic TableIndexCount
 			_ = rows.Scan(&tic.Schema, &tic.Name, &tic.IndexCount, &tic.SizeBytes, &tic.RowCount, &tic.BloatPct)
+			tic.Database = res.ConnInfo.CurrentDB
 			res.TablesWithIndexCount = append(res.TablesWithIndexCount, tic)
 		}
 		rows.Close()
