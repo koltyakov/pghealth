@@ -1007,34 +1007,48 @@ const htmlTemplate = `<!doctype html>
   <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
   <script>
-    // Simple, robust, data-attribute driven event handling
-    document.body.addEventListener('click', function(e) {
-      var button = e.target.closest('button[data-target]');
-      if (!button) {
-        return;
-      }
-      
-      var target = document.querySelector(button.dataset.target);
-      if (!target) {
-        return;
-      }
+    document.addEventListener('DOMContentLoaded', function() {
+      // --- Toggle table visibility ---
+      var toggleButtons = document.querySelectorAll('.toggle-rows');
+      toggleButtons.forEach(function(button) {
+        button.addEventListener('click', function() {
+          var targetSelector = button.getAttribute('data-target');
+          var targetElement = document.querySelector(targetSelector);
+          if (targetElement) {
+            targetElement.classList.toggle('collapsed');
+            var isCollapsed = targetElement.classList.contains('collapsed');
+            button.textContent = isCollapsed ? 'Show all' : 'Show less';
+          }
+        });
+      });
 
-      // Toggle table rows
-      if (button.classList.contains('toggle-rows')) {
-        target.classList.toggle('collapsed');
-        button.textContent = target.classList.contains('collapsed') ? 'Show all' : 'Show less';
-      }
-      // Toggle full query text
-      else if (button.classList.contains('show-full')) {
-        target.classList.toggle('expanded');
-        button.textContent = target.classList.contains('expanded') ? 'Show less' : 'Show full';
-      }
-      // Toggle execution plan
-      else if (button.classList.contains('show-plan')) {
-        var isHidden = target.style.display === 'none';
-        target.style.display = isHidden ? 'block' : 'none';
-        button.textContent = isHidden ? 'Hide plan' : 'Show plan';
-      }
+      // --- Toggle full query text visibility ---
+      var showFullButtons = document.querySelectorAll('.show-full');
+      showFullButtons.forEach(function(button) {
+        button.addEventListener('click', function() {
+          var targetSelector = button.getAttribute('data-target');
+          var targetElement = document.querySelector(targetSelector);
+          if (targetElement) {
+            targetElement.classList.toggle('expanded');
+            var isExpanded = targetElement.classList.contains('expanded');
+            button.textContent = isExpanded ? 'Show less' : 'Show full';
+          }
+        });
+      });
+
+      // --- Toggle execution plan visibility ---
+      var showPlanButtons = document.querySelectorAll('.show-plan');
+      showPlanButtons.forEach(function(button) {
+        button.addEventListener('click', function() {
+          var targetSelector = button.getAttribute('data-target');
+          var targetElement = document.querySelector(targetSelector);
+          if (targetElement) {
+            var isHidden = targetElement.style.display === 'none';
+            targetElement.style.display = isHidden ? 'block' : 'none';
+            button.textContent = isHidden ? 'Hide plan' : 'Show plan';
+          }
+        });
+      });
     });
   </script>
 </body>
