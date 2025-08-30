@@ -23,15 +23,25 @@ type Result struct {
 	Statements     Statements
 	Errors         []string
 	// Healthchecks
-	CacheHitCurrent     float64
-	CacheHitOverall     float64
-	TotalConnections    int
-	ConnectionsByClient []ClientConn
-	Blocking            []Blocking
-	LongRunning         []LongQuery
-	AutoVacuum          []AutoVacuum
-	CacheHits           []CacheHit
-	IndexUsageLow       []IndexUsage
+	CacheHitCurrent      float64
+	CacheHitOverall      float64
+	TotalConnections     int
+	ConnectionsByClient  []ClientConn
+	Blocking             []Blocking
+	LongRunning          []LongQuery
+	AutoVacuum           []AutoVacuum
+	CacheHits            []CacheHit
+	IndexUsageLow        []IndexUsage
+	TablesWithIndexCount []TableIndexCount
+	TableBloatStats      []TableBloatStat
+	IndexBloatStats      []IndexBloatStat
+	ReplicationStats     []ReplicationStat
+	CheckpointStats      CheckpointStats
+	MemoryStats          MemoryStats
+	IOStats              IOStats
+	LockStats            []LockStat
+	TempFileStats        []TempFileStat
+	ExtensionStats       []ExtensionStat
 }
 
 type ConnInfo struct {
@@ -187,6 +197,96 @@ type IndexUsage struct {
 	Table         string
 	IndexUsagePct float64
 	Rows          int64
+}
+
+type TableIndexCount struct {
+	Schema     string
+	Name       string
+	IndexCount int
+	SizeBytes  int64
+	RowCount   int64
+	BloatPct   float64
+}
+
+type TableBloatStat struct {
+	Schema         string
+	Name           string
+	EstimatedBloat float64 // percentage
+	WastedBytes    int64
+	LastVacuum     *time.Time
+	LastAnalyze    *time.Time
+}
+
+type IndexBloatStat struct {
+	Schema         string
+	Table          string
+	Name           string
+	EstimatedBloat float64
+	WastedBytes    int64
+	Scans          int64
+}
+
+type ReplicationStat struct {
+	Name         string
+	State        string
+	SyncState    string
+	SyncPriority int
+	ReplayLag    string
+	WriteLag     string
+	FlushLag     string
+}
+
+type CheckpointStats struct {
+	RequestedCheckpoints int64
+	ScheduledCheckpoints int64
+	CheckpointWriteTime  time.Duration
+	CheckpointSyncTime   time.Duration
+	BuffersWritten       int64
+	BuffersCheckpoint    int64
+}
+
+type MemoryStats struct {
+	SharedBuffersUsed  int64
+	SharedBuffersTotal int64
+	WorkMemUsed        int64
+	MaintenanceWorkMem int64
+	TempBuffersUsed    int64
+	LocalBuffersUsed   int64
+}
+
+type IOStats struct {
+	HeapBlksRead  int64
+	HeapBlksHit   int64
+	IdxBlksRead   int64
+	IdxBlksHit    int64
+	ToastBlksRead int64
+	ToastBlksHit  int64
+	TidxBlksRead  int64
+	TidxBlksHit   int64
+	ReadTime      time.Duration
+	WriteTime     time.Duration
+}
+
+type LockStat struct {
+	LockType    string
+	Mode        string
+	Granted     bool
+	Count       int
+	WaitingPIDs []int
+}
+
+type TempFileStat struct {
+	Datname string
+	PID     int
+	Files   int64
+	Bytes   int64
+}
+
+type ExtensionStat struct {
+	Name        string
+	Version     string
+	Description string
+	Schema      string
 }
 
 func Run(ctx context.Context, cfg Config) (Result, error) {
@@ -600,6 +700,163 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				rows.Close()
 			}
 		}
+	}
+
+	// New: Tables with index counts
+	if rows, err := conn.Query(ctx, `select t.schemaname, t.relname,
+			count(i.indexrelid) as index_count,
+			pg_total_relation_size(format('%I.%I', t.schemaname, t.relname)) as size_bytes,
+			t.n_live_tup,
+			coalesce(100.0 * t.n_dead_tup / nullif(t.n_live_tup + t.n_dead_tup, 0), 0.0) as bloat_pct
+		from pg_stat_user_tables t
+		left join pg_stat_user_indexes i on i.schemaname = t.schemaname and i.relname = t.relname
+		group by t.schemaname, t.relname, t.n_live_tup, t.n_dead_tup
+		order by size_bytes desc
+		limit 100`); err == nil {
+		for rows.Next() {
+			var tic TableIndexCount
+			_ = rows.Scan(&tic.Schema, &tic.Name, &tic.IndexCount, &tic.SizeBytes, &tic.RowCount, &tic.BloatPct)
+			res.TablesWithIndexCount = append(res.TablesWithIndexCount, tic)
+		}
+		rows.Close()
+	}
+
+	// New: Advanced table bloat analysis
+	if rows, err := conn.Query(ctx, `select schemaname, relname,
+			coalesce(100.0 * n_dead_tup / nullif(n_live_tup + n_dead_tup, 0), 0.0) as bloat_pct,
+			pg_total_relation_size(format('%I.%I', schemaname, relname)) * 
+			coalesce(n_dead_tup::float8 / nullif(n_live_tup + n_dead_tup, 0), 0.0) as wasted_bytes,
+			last_vacuum, last_analyze
+		from pg_stat_user_tables
+		where n_live_tup + n_dead_tup > 10000
+		order by wasted_bytes desc
+		limit 50`); err == nil {
+		for rows.Next() {
+			var tbs TableBloatStat
+			var lastVacuum, lastAnalyze *time.Time
+			_ = rows.Scan(&tbs.Schema, &tbs.Name, &tbs.EstimatedBloat, &tbs.WastedBytes, &lastVacuum, &lastAnalyze)
+			tbs.LastVacuum = lastVacuum
+			tbs.LastAnalyze = lastAnalyze
+			res.TableBloatStats = append(res.TableBloatStats, tbs)
+		}
+		rows.Close()
+	}
+
+	// New: Index bloat analysis
+	if rows, err := conn.Query(ctx, `select s.schemaname, s.relname, s.indexrelname,
+			0.0 as estimated_bloat, -- Placeholder for actual bloat calculation
+			pg_relation_size(s.indexrelid) as size_bytes,
+			s.idx_scan
+		from pg_stat_user_indexes s
+		where pg_relation_size(s.indexrelid) > 10485760 -- > 10MB
+		order by size_bytes desc
+		limit 50`); err == nil {
+		for rows.Next() {
+			var ibs IndexBloatStat
+			_ = rows.Scan(&ibs.Schema, &ibs.Table, &ibs.Name, &ibs.EstimatedBloat, &ibs.WastedBytes, &ibs.Scans)
+			res.IndexBloatStats = append(res.IndexBloatStats, ibs)
+		}
+		rows.Close()
+	}
+
+	// New: Replication statistics
+	if rows, err := conn.Query(ctx, `select application_name, state, sync_state, sync_priority,
+			coalesce(write_lag::text, '00:00:00') as write_lag,
+			coalesce(flush_lag::text, '00:00:00') as flush_lag,
+			coalesce(replay_lag::text, '00:00:00') as replay_lag
+		from pg_stat_replication
+		order by sync_priority desc`); err == nil {
+		for rows.Next() {
+			var rs ReplicationStat
+			_ = rows.Scan(&rs.Name, &rs.State, &rs.SyncState, &rs.SyncPriority, &rs.WriteLag, &rs.FlushLag, &rs.ReplayLag)
+			res.ReplicationStats = append(res.ReplicationStats, rs)
+		}
+		rows.Close()
+	}
+
+	// New: Checkpoint statistics
+	if rows, err := conn.Query(ctx, `select checkpoints_req, checkpoints_timed,
+			checkpoint_write_time, checkpoint_sync_time,
+			buffers_checkpoint, buffers_clean
+		from pg_stat_bgwriter`); err == nil {
+		if rows.Next() {
+			_ = rows.Scan(&res.CheckpointStats.RequestedCheckpoints, &res.CheckpointStats.ScheduledCheckpoints,
+				&res.CheckpointStats.CheckpointWriteTime, &res.CheckpointStats.CheckpointSyncTime,
+				&res.CheckpointStats.BuffersCheckpoint, &res.CheckpointStats.BuffersWritten)
+		}
+		rows.Close()
+	}
+
+	// New: Memory statistics
+	if rows, err := conn.Query(ctx, `select buffers_alloc, buffers_checkpoint + buffers_clean + buffers_backend,
+			0 as work_mem_used, 0 as maint_work_mem, 0 as temp_buffers, 0 as local_buffers
+		from pg_stat_bgwriter`); err == nil {
+		if rows.Next() {
+			_ = rows.Scan(&res.MemoryStats.SharedBuffersUsed, &res.MemoryStats.SharedBuffersTotal,
+				&res.MemoryStats.WorkMemUsed, &res.MemoryStats.MaintenanceWorkMem,
+				&res.MemoryStats.TempBuffersUsed, &res.MemoryStats.LocalBuffersUsed)
+		}
+		rows.Close()
+	}
+
+	// New: IO statistics
+	if rows, err := conn.Query(ctx, `select heap_blks_read, heap_blks_hit, idx_blks_read, idx_blks_hit,
+			toast_blks_read, toast_blks_hit, tidx_blks_read, tidx_blks_hit,
+			coalesce(blk_read_time, 0), coalesce(blk_write_time, 0)
+		from pg_stat_database
+		where datname = current_database()`); err == nil {
+		if rows.Next() {
+			_ = rows.Scan(&res.IOStats.HeapBlksRead, &res.IOStats.HeapBlksHit,
+				&res.IOStats.IdxBlksRead, &res.IOStats.IdxBlksHit,
+				&res.IOStats.ToastBlksRead, &res.IOStats.ToastBlksHit,
+				&res.IOStats.TidxBlksRead, &res.IOStats.TidxBlksHit,
+				&res.IOStats.ReadTime, &res.IOStats.WriteTime)
+		}
+		rows.Close()
+	}
+
+	// New: Lock statistics
+	if rows, err := conn.Query(ctx, `select locktype, mode, granted, count(*) as count,
+			array_agg(pid) as waiting_pids
+		from pg_locks
+		where not granted
+		group by locktype, mode, granted
+		order by count desc
+		limit 20`); err == nil {
+		for rows.Next() {
+			var ls LockStat
+			_ = rows.Scan(&ls.LockType, &ls.Mode, &ls.Granted, &ls.Count, &ls.WaitingPIDs)
+			res.LockStats = append(res.LockStats, ls)
+		}
+		rows.Close()
+	}
+
+	// New: Temporary file statistics
+	if rows, err := conn.Query(ctx, `select datname, pid, temp_files, temp_bytes
+		from pg_stat_activity
+		where temp_files > 0 or temp_bytes > 0
+		order by temp_bytes desc
+		limit 20`); err == nil {
+		for rows.Next() {
+			var tfs TempFileStat
+			_ = rows.Scan(&tfs.Datname, &tfs.PID, &tfs.Files, &tfs.Bytes)
+			res.TempFileStats = append(res.TempFileStats, tfs)
+		}
+		rows.Close()
+	}
+
+	// New: Extension statistics
+	if rows, err := conn.Query(ctx, `select e.extname, e.extversion, obj_description(e.oid, 'pg_extension'),
+			n.nspname
+		from pg_extension e
+		left join pg_namespace n on n.oid = e.extnamespace
+		order by e.extname`); err == nil {
+		for rows.Next() {
+			var es ExtensionStat
+			_ = rows.Scan(&es.Name, &es.Version, &es.Description, &es.Schema)
+			res.ExtensionStats = append(res.ExtensionStats, es)
+		}
+		rows.Close()
 	}
 
 	return res, nil

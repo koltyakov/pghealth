@@ -359,6 +359,301 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
+	// New: Analyze tables with index counts
+	if len(res.TablesWithIndexCount) > 0 {
+		tablesWithoutIndexes := 0
+		tablesWithManyIndexes := 0
+		for _, t := range res.TablesWithIndexCount {
+			if t.IndexCount == 0 && t.RowCount > 1000 {
+				tablesWithoutIndexes++
+			}
+			if t.IndexCount > 10 {
+				tablesWithManyIndexes++
+			}
+		}
+		if tablesWithoutIndexes > 0 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "Tables without indexes",
+				Severity:    "warn",
+				Description: fmt.Sprintf("%d large tables have no indexes", tablesWithoutIndexes),
+				Action:      "Review tables with >1000 rows and no indexes; consider adding primary keys and selective indexes.",
+			})
+		}
+		if tablesWithManyIndexes > 0 {
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Tables with many indexes",
+				Severity:    "rec",
+				Description: fmt.Sprintf("%d tables have >10 indexes", tablesWithManyIndexes),
+				Action:      "Review index usage; consider dropping unused indexes to reduce write overhead and storage.",
+			})
+		}
+	}
+
+	// New: Advanced bloat analysis
+	if len(res.TableBloatStats) > 0 {
+		severeBloat := 0
+		totalWasted := int64(0)
+		for _, b := range res.TableBloatStats {
+			if b.EstimatedBloat > 50 {
+				severeBloat++
+			}
+			totalWasted += b.WastedBytes
+		}
+		if severeBloat > 0 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "Severe table bloat detected",
+				Severity:    "warn",
+				Description: fmt.Sprintf("%d tables with >50%% bloat, wasting %.2f GB", severeBloat, bytesToGB(totalWasted)),
+				Action:      "Run VACUUM FULL or use pg_repack on severely bloated tables; review autovacuum settings.",
+			})
+		}
+	}
+
+	// New: Index bloat analysis
+	if len(res.IndexBloatStats) > 0 {
+		largeUnusedIndexes := 0
+		for _, ib := range res.IndexBloatStats {
+			if ib.Scans == 0 && ib.WastedBytes > 100*1024*1024 { // >100MB
+				largeUnusedIndexes++
+			}
+		}
+		if largeUnusedIndexes > 0 {
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Large unused indexes",
+				Severity:    "rec",
+				Description: fmt.Sprintf("%d indexes >100MB with zero scans", largeUnusedIndexes),
+				Action:      "Consider dropping large unused indexes; monitor impact before removal.",
+			})
+		}
+	}
+
+	// New: Replication health
+	if len(res.ReplicationStats) > 0 {
+		lagIssues := 0
+		for _, r := range res.ReplicationStats {
+			if r.SyncState != "sync" && r.SyncState != "quorum" {
+				lagIssues++
+			}
+		}
+		if lagIssues > 0 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "Replication lag detected",
+				Severity:    "warn",
+				Description: fmt.Sprintf("%d replicas not in sync state", lagIssues),
+				Action:      "Check network connectivity, replica performance, and wal_sender/wal_receiver processes.",
+			})
+		}
+	} else if res.ConnInfo.IsSuperuser {
+		a.Infos = append(a.Infos, Finding{
+			Title:       "No replication configured",
+			Severity:    "info",
+			Description: "No replication slots or replicas detected",
+			Action:      "Consider setting up streaming replication for high availability and read scaling.",
+		})
+	}
+
+	// New: Checkpoint analysis
+	if res.CheckpointStats.RequestedCheckpoints > 0 {
+		reqRatio := float64(res.CheckpointStats.RequestedCheckpoints) /
+			float64(res.CheckpointStats.RequestedCheckpoints+res.CheckpointStats.ScheduledCheckpoints) * 100
+		if reqRatio > 10 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "Frequent requested checkpoints",
+				Severity:    "warn",
+				Description: fmt.Sprintf("%.1f%% of checkpoints are requested (not scheduled)", reqRatio),
+				Action:      "Increase max_wal_size and checkpoint_timeout; reduce checkpoint_completion_target if needed.",
+			})
+		}
+	}
+
+	// New: IO performance analysis
+	if res.IOStats.HeapBlksRead+res.IOStats.HeapBlksHit > 0 {
+		heapHitRatio := float64(res.IOStats.HeapBlksHit) /
+			float64(res.IOStats.HeapBlksRead+res.IOStats.HeapBlksHit) * 100
+		if heapHitRatio < 95 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "Low heap cache hit ratio",
+				Severity:    "warn",
+				Description: fmt.Sprintf("Heap cache hit ratio: %.1f%%", heapHitRatio),
+				Action:      "Increase shared_buffers; ensure working set fits in memory; check for memory pressure.",
+			})
+		}
+	}
+
+	// New: Lock contention analysis
+	if len(res.LockStats) > 0 {
+		totalWaiting := 0
+		for _, l := range res.LockStats {
+			if !l.Granted {
+				totalWaiting += l.Count
+			}
+		}
+		if totalWaiting > 10 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "High lock contention",
+				Severity:    "warn",
+				Description: fmt.Sprintf("%d locks are waiting to be granted", totalWaiting),
+				Action:      "Review long-running transactions; consider shorter transaction durations and lock timeouts.",
+			})
+		}
+	}
+
+	// New: Temporary file analysis
+	if len(res.TempFileStats) > 0 {
+		totalTempBytes := int64(0)
+		for _, t := range res.TempFileStats {
+			totalTempBytes += t.Bytes
+		}
+		if totalTempBytes > 1024*1024*1024 { // >1GB
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "High temporary file usage",
+				Severity:    "warn",
+				Description: fmt.Sprintf("Sessions using %.2f GB in temporary files", bytesToGB(totalTempBytes)),
+				Action:      "Increase work_mem; review queries with large sorts/hashes; consider temp_file_limit.",
+			})
+		}
+	}
+
+	// New: Extension analysis
+	if len(res.ExtensionStats) > 0 {
+		usefulExtensions := []string{"pg_stat_statements"}
+		missing := []string{}
+		for _, ext := range usefulExtensions {
+			found := false
+			for _, e := range res.ExtensionStats {
+				if e.Name == ext {
+					found = true
+					break
+				}
+			}
+			if !found {
+				missing = append(missing, ext)
+			}
+		}
+		if len(missing) > 0 {
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Useful extensions not installed",
+				Severity:    "rec",
+				Description: fmt.Sprintf("Consider installing: %s", strings.Join(missing, ", ")),
+				Action:      "CREATE EXTENSION IF NOT EXISTS extension_name; (requires superuser or appropriate privileges)",
+			})
+		}
+	}
+
+	// New: Memory configuration analysis
+	if s, ok := setting("shared_buffers"); ok {
+		if s.Val == "128MB" || s.Val == "16384" { // Default values
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "shared_buffers may be too low",
+				Severity:    "rec",
+				Description: "shared_buffers is at default value",
+				Action:      "Set shared_buffers to 25-40% of available RAM for dedicated PostgreSQL servers.",
+			})
+		}
+	}
+
+	// New: WAL configuration analysis
+	if s, ok := setting("wal_level"); ok && s.Val == "replica" {
+		a.Infos = append(a.Infos, Finding{
+			Title:       "WAL level supports replication",
+			Severity:    "info",
+			Description: "wal_level=replica enables streaming replication",
+			Action:      "Consider 'logical' if you need logical replication for specific use cases.",
+		})
+	}
+
+	// New: Connection pooling recommendation
+	if res.ConnInfo.MaxConnections > 100 {
+		a.Recommendations = append(a.Recommendations, Finding{
+			Title:       "High max_connections setting",
+			Severity:    "rec",
+			Description: fmt.Sprintf("max_connections=%d may be high", res.ConnInfo.MaxConnections),
+			Action:      "Consider using a connection pooler (pgbouncer) and reducing max_connections to 20-50.",
+		})
+	}
+
+	// New: Autovacuum configuration analysis
+	if s, ok := setting("autovacuum_naptime"); ok {
+		if secs := asSeconds(s, true); secs > 300 { // >5 minutes
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "autovacuum_naptime may be too high",
+				Severity:    "rec",
+				Description: fmt.Sprintf("autovacuum_naptime=%.0fs", secs),
+				Action:      "Consider reducing to 20-60 seconds for more aggressive autovacuum scheduling.",
+			})
+		}
+	}
+
+	// New: Maintenance work memory analysis
+	if s, ok := setting("maintenance_work_mem"); ok {
+		if val, _ := asBytes(s, true); val < 64*1024*1024 { // <64MB
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "maintenance_work_mem may be too low",
+				Severity:    "rec",
+				Description: "maintenance_work_mem is low for VACUUM/REINDEX operations",
+				Action:      "Increase maintenance_work_mem to 256MB-1GB for better maintenance performance.",
+			})
+		}
+	}
+
+	// New: Random page cost analysis
+	if s, ok := setting("random_page_cost"); ok {
+		if s.Val == "4" { // Default
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "random_page_cost at default",
+				Severity:    "rec",
+				Description: "random_page_cost=4.0 may not reflect modern storage",
+				Action:      "For SSD storage, consider reducing to 1.1-2.0; for HDD, 4.0 is usually appropriate.",
+			})
+		}
+	}
+
+	// New: Work memory analysis
+	if s, ok := setting("work_mem"); ok {
+		if val, _ := asBytes(s, true); val > 50*1024*1024 { // >50MB
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "work_mem may be too high",
+				Severity:    "warn",
+				Description: fmt.Sprintf("work_mem=%s", s.Val),
+				Action:      "High work_mem can cause memory pressure; consider per-query work_mem or lower global setting.",
+			})
+		}
+	}
+
+	// New: SSL configuration
+	if res.ConnInfo.SSL == "off" || res.ConnInfo.SSL == "" {
+		a.Recommendations = append(a.Recommendations, Finding{
+			Title:       "SSL not enabled",
+			Severity:    "rec",
+			Description: "SSL encryption is not enabled for connections",
+			Action:      "Enable SSL for encrypted client connections; configure ssl=on and provide certificates.",
+		})
+	}
+
+	// New: Statement timeout analysis
+	if s, ok := setting("statement_timeout"); ok {
+		if s.Val == "0" { // No timeout
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "No statement timeout configured",
+				Severity:    "rec",
+				Description: "statement_timeout is disabled",
+				Action:      "Set statement_timeout to prevent runaway queries; consider 30s-5m depending on workload.",
+			})
+		}
+	}
+
+	// New: Idle transaction timeout
+	if s, ok := setting("idle_in_transaction_session_timeout"); ok {
+		if s.Val == "0" { // No timeout
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "No idle transaction timeout",
+				Severity:    "rec",
+				Description: "idle_in_transaction_session_timeout is disabled",
+				Action:      "Set idle_in_transaction_session_timeout to 10-60 minutes to prevent abandoned transactions.",
+			})
+		}
+	}
+
 	return a
 }
 

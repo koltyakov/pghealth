@@ -213,10 +213,11 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		"fmtMB": func(b int64) string {
 			return fmtFloatPrecSep(float64(b)/1024.0/1024.0, 2)
 		},
-		"fmtInt": func(n int) string { return addThousands(strconv.FormatInt(int64(n), 10)) },
-		"fmtI64": func(n int64) string { return addThousands(strconv.FormatInt(n, 10)) },
-		"fmtF0":  func(f float64) string { return fmtFloatPrecSep(f, 0) },
-		"fmtF2":  func(f float64) string { return fmtFloatPrecSep(f, 2) },
+		"fmtInt":       func(n int) string { return addThousands(strconv.FormatInt(int64(n), 10)) },
+		"fmtI64":       func(n int64) string { return addThousands(strconv.FormatInt(n, 10)) },
+		"fmtF0":        func(f float64) string { return fmtFloatPrecSep(f, 0) },
+		"fmtF2":        func(f float64) string { return fmtFloatPrecSep(f, 2) },
+		"fmtThousands": func(n int64) string { return addThousands(strconv.FormatInt(n, 10)) },
 	}).Parse(htmlTemplate))
 	data := struct {
 		Res          collect.Result
@@ -448,15 +449,24 @@ const htmlTemplate = `<!doctype html>
       padding: 0;
     }
     
-    .toggle-rows {
+    .toggle-rows, .show-full, .show-plan {
       background: #fff;
       border: 1px solid #d1d5db;
-      padding: 6px 10px;
+      padding: 4px 8px;
       cursor: pointer;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #374151;
+      transition: background-color 0.2s;
     }
     
-    .toggle-rows:hover {
+    .toggle-rows:hover, .show-full:hover, .show-plan:hover {
       background: #f9fafb;
+      border-color: #9ca3af;
+    }
+    
+    .toggle-rows:active, .show-full:active, .show-plan:active {
+      background: #f3f4f6;
     }
     
     /* Query display */
@@ -485,12 +495,10 @@ const htmlTemplate = `<!doctype html>
     }
     
     .show-full {
-      background: #fff;
-      border: 1px solid #d1d5db;
-      padding: 2px 6px;
       margin-top: 6px;
-      cursor: pointer;
     }
+    
+    /* Plan advice */
     
     /* Plan advice */
     .plan-advice {
@@ -510,11 +518,7 @@ const htmlTemplate = `<!doctype html>
     }
     
     .show-plan {
-      background: #fff;
-      border: 1px solid #d1d5db;
-      padding: 2px 6px;
       margin-top: 6px;
-      cursor: pointer;
     }
     
     .plan-pre {
@@ -700,6 +704,38 @@ const htmlTemplate = `<!doctype html>
   </div>
   {{if .IndexUsageSummary}}<p class="section-note">{{.IndexUsageSummary}}</p>{{end}}
 
+  <h2>Tables with index counts</h2>
+  <div class="table-wrap{{if gt (len .Res.TablesWithIndexCount) 10}} collapsed{{end}}">
+    <table>
+      <thead>
+        <tr>
+          <th>Schema</th>
+          <th>Table</th>
+          <th>Index Count</th>
+          <th>Size</th>
+          <th>Rows</th>
+          <th>Bloat %</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Res.TablesWithIndexCount}}
+          {{range .Res.TablesWithIndexCount}}
+          <tr{{if gt .BloatPct 20.0}} class="hot"{{end}}>
+            <td>{{.Schema}}</td>
+            <td>{{.Name}}</td>
+            <td{{if eq .IndexCount 0}} class="badge-attn"{{end}}>{{.IndexCount}}</td>
+            <td>{{fmtBytes .SizeBytes}}</td>
+            <td>{{fmtThousands .RowCount}}</td>
+            <td>{{printf "%.1f" .BloatPct}}%</td>
+          </tr>
+          {{end}}
+        {{else}}
+          <tr><td colspan="6" class="muted">No data</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>{{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+
   <h3>Cache hit ratio by database</h3>
   <p class="muted">Interpretation: closer to 100% is better. Values above ~99% are typical for OLTP workloads. Lower ratios indicate more disk reads; consider increasing shared_buffers, reviewing working set size, and improving indexing and query plans.</p>
   <div class="table-wrap collapsed">
@@ -781,7 +817,9 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
     </tbody>
-  </table>{{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
+  </table>
+  {{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+</div>
 
   <h2>Top queries by calls</h2>
   <div class="table-wrap collapsed">
@@ -800,7 +838,9 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
     </tbody>
-  </table>{{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
+  </table>
+  {{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+</div>
   {{else}}
   <p>pg_stat_statements is not enabled in this database. Install and preload it for detailed query insights.</p>
   {{end}}
@@ -816,7 +856,9 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="7" class="muted">No blocking detected</td></tr>
     {{end}}
     </tbody>
-  </table>{{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
+  </table>
+  {{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+</div>
   <p class="section-note">{{.BlockingSummary}}</p>
 
   <h2>Long running queries (> 5m)</h2>
@@ -830,7 +872,9 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="5" class="muted">No long running queries</td></tr>
     {{end}}
     </tbody>
-  </table>{{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
+  </table>
+  {{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+</div>
   <p class="section-note">{{.LongRunningSummary}}</p>
 
   <h2>Autovacuum activities</h2>
@@ -844,8 +888,122 @@ const htmlTemplate = `<!doctype html>
       <tr><td colspan="6" class="muted">No autovacuum workers</td></tr>
     {{end}}
     </tbody>
-  </table>{{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
+  </table>
+  {{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+</div>
   <p class="section-note">{{.AutovacSummary}}</p>
+
+  {{if .Res.ReplicationStats}}
+  <h2>Replication status</h2>
+  <div class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Replica</th>
+          <th>State</th>
+          <th>Sync State</th>
+          <th>Priority</th>
+          <th>Write Lag</th>
+          <th>Flush Lag</th>
+          <th>Replay Lag</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.ReplicationStats}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td>{{.State}}</td>
+          <td>{{.SyncState}}</td>
+          <td>{{.SyncPriority}}</td>
+          <td>{{.WriteLag}}</td>
+          <td>{{.FlushLag}}</td>
+          <td>{{.ReplayLag}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Res.LockStats}}
+  <h2>Lock contention</h2>
+  <div class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Lock Type</th>
+          <th>Mode</th>
+          <th>Granted</th>
+          <th>Count</th>
+          <th>Waiting PIDs</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.LockStats}}
+        <tr>
+          <td>{{.LockType}}</td>
+          <td>{{.Mode}}</td>
+          <td>{{if .Granted}}Yes{{else}}No{{end}}</td>
+          <td>{{.Count}}</td>
+          <td>{{range .WaitingPIDs}}{{.}} {{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Res.TempFileStats}}
+  <h2>Temporary file usage</h2>
+  <div class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Database</th>
+          <th>PID</th>
+          <th>Files</th>
+          <th>Size</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.TempFileStats}}
+        <tr>
+          <td>{{.Datname}}</td>
+          <td>{{.PID}}</td>
+          <td>{{fmtI64 .Files}}</td>
+          <td>{{fmtBytes .Bytes}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Res.ExtensionStats}}
+  <h2>Installed extensions</h2>
+  <div class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Version</th>
+          <th>Description</th>
+          <th>Schema</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.ExtensionStats}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td>{{.Version}}</td>
+          <td>{{.Description}}</td>
+          <td>{{.Schema}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
 
   <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
@@ -857,16 +1015,24 @@ const htmlTemplate = `<!doctype html>
         for (var i = 0; i < fullEls.length; i++) {
           fullEls[i].style.display = 'none';
         }
+        
+        // Add click event listeners to buttons
+        var buttons = document.querySelectorAll('button');
+        for (var i = 0; i < buttons.length; i++) {
+          buttons[i].addEventListener('click', handleButtonClick);
+        }
       });
       
-      // Handle all interactive button clicks
-      document.addEventListener('click', function(e) {
+      // Handle button clicks
+      function handleButtonClick(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        
         var target = e.target;
         
         // Toggle table rows (Show all / Show less)
         if (target.classList && target.classList.contains('toggle-rows')) {
-          e.preventDefault();
-          var wrap = target.parentElement.parentElement;
+          var wrap = target.closest('.table-wrap');
           if (!wrap || !wrap.classList) return;
           
           wrap.classList.toggle('collapsed');
@@ -878,8 +1044,7 @@ const htmlTemplate = `<!doctype html>
         
         // Toggle query text (Show full / Show less)
         if (target.classList && target.classList.contains('show-full')) {
-          e.preventDefault();
-          var td = target.parentElement;
+          var td = target.closest('td');
           if (!td) return;
           
           var shortEl = td.querySelector('.query-short');
@@ -901,8 +1066,7 @@ const htmlTemplate = `<!doctype html>
         
         // Toggle plan visibility (Show plan / Hide plan)
         if (target.classList && target.classList.contains('show-plan')) {
-          e.preventDefault();
-          var card = target.parentElement;
+          var card = target.closest('.plan-advice');
           if (!card) return;
           
           var pre = card.querySelector('.plan-pre');
@@ -915,7 +1079,7 @@ const htmlTemplate = `<!doctype html>
           target.textContent = expanded ? 'Show plan' : 'Hide plan';
           return;
         }
-      });
+      }
     })();
   </script>
 </body>
