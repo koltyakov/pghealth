@@ -34,6 +34,23 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	})
 	sort.Slice(res.IndexUnused, func(i, j int) bool { return res.IndexUnused[i].SizeBytes > res.IndexUnused[j].SizeBytes })
 	sort.Slice(res.Indexes, func(i, j int) bool { return res.Indexes[i].SizeBytes > res.Indexes[j].SizeBytes })
+	// Sort tables with index counts by IndexCount desc across all DBs
+	sort.Slice(res.TablesWithIndexCount, func(i, j int) bool {
+		if res.TablesWithIndexCount[i].IndexCount == res.TablesWithIndexCount[j].IndexCount {
+			// tie-breaker by size desc, then name
+			if res.TablesWithIndexCount[i].SizeBytes == res.TablesWithIndexCount[j].SizeBytes {
+				if res.TablesWithIndexCount[i].Database == res.TablesWithIndexCount[j].Database {
+					if res.TablesWithIndexCount[i].Schema == res.TablesWithIndexCount[j].Schema {
+						return res.TablesWithIndexCount[i].Name < res.TablesWithIndexCount[j].Name
+					}
+					return res.TablesWithIndexCount[i].Schema < res.TablesWithIndexCount[j].Schema
+				}
+				return res.TablesWithIndexCount[i].Database < res.TablesWithIndexCount[j].Database
+			}
+			return res.TablesWithIndexCount[i].SizeBytes > res.TablesWithIndexCount[j].SizeBytes
+		}
+		return res.TablesWithIndexCount[i].IndexCount > res.TablesWithIndexCount[j].IndexCount
+	})
 	// Prepare sorted copies for top tables by rows and by size
 	tablesBySize := make([]collect.TableStat, len(res.Tables))
 	copy(tablesBySize, res.Tables)
