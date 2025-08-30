@@ -270,12 +270,30 @@ func Run(res collect.Result) Analysis {
 
 	// Statements / pg_stat_statements context
 	if res.Statements.Available {
+		if !res.Statements.StatsResetTime.IsZero() {
+			statsAge := time.Since(res.Statements.StatsResetTime)
+			a.Infos = append(a.Infos, Finding{
+				Title:       "Query stats window",
+				Severity:    "info",
+				Description: fmt.Sprintf("pg_stat_statements data covers the last %s (since %s)", statsAge.Truncate(time.Second), res.Statements.StatsResetTime.Format(time.RFC3339)),
+				Action:      "Run `SELECT pg_stat_statements_reset()` to clear stats if needed.",
+			})
+		}
+
 		if len(res.Statements.TopByTotalTime) > 0 {
 			q := res.Statements.TopByTotalTime[0]
+			desc := fmt.Sprintf("Calls: %.0f, TotalTime: %.2f ms", q.Calls, q.TotalTime)
+			if !res.Statements.StatsResetTime.IsZero() {
+				statsAgeHours := time.Since(res.Statements.StatsResetTime).Hours()
+				if statsAgeHours > 0 {
+					callsPerHour := q.Calls / statsAgeHours
+					desc += fmt.Sprintf(", Calls/hr: %.1f", callsPerHour)
+				}
+			}
 			a.Infos = append(a.Infos, Finding{
 				Title:       "Top query by total time",
 				Severity:    "info",
-				Description: fmt.Sprintf("Calls: %.0f, TotalTime: %.2f ms", q.Calls, q.TotalTime),
+				Description: desc,
 				Action:      "Review execution plan and caching. Consider increasing work_mem for heavy sorts/aggregations.",
 			})
 		}

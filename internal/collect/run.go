@@ -123,6 +123,7 @@ type Statements struct {
 	TopByCalls     []Statement
 	TopByIO        []Statement
 	TopByIOBlocks  []Statement
+	StatsResetTime time.Time
 }
 
 type Statement struct {
@@ -162,6 +163,7 @@ type ClientConn struct {
 	Application string
 	Count       int
 }
+
 type Blocking struct {
 	Datname          string
 	BlockedPID       int
@@ -171,6 +173,7 @@ type Blocking struct {
 	BlockedQuery     string
 	BlockingQuery    string
 }
+
 type LongQuery struct {
 	Datname  string
 	PID      int
@@ -178,6 +181,7 @@ type LongQuery struct {
 	State    string
 	Query    string
 }
+
 type AutoVacuum struct {
 	Datname  string
 	PID      int
@@ -430,6 +434,16 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 
 	// pg_stat_statements if available
 	if res.Extensions.PgStatStatements {
+		// Get stats reset time
+		var statsReset time.Time
+		// Try pg_stat_statements_info first (PG13+)
+		err := queryRow(ctx, conn, `SELECT stats_reset FROM pg_stat_statements_info`, &statsReset)
+		if err != nil {
+			// Fallback to pg_stat_database for older versions
+			_ = queryRow(ctx, conn, `SELECT stats_reset FROM pg_stat_database WHERE datname = current_database()`, &statsReset)
+		}
+		res.Statements.StatsResetTime = statsReset
+
 		hasIO := hasPSSIOCols(ctx, conn, res.Extensions.PgStatStatementsSchema)
 		hasBlk := hasPSSBlockCols(ctx, conn, res.Extensions.PgStatStatementsSchema)
 		// Top by total execution time
