@@ -481,19 +481,22 @@ const htmlTemplate = `<!doctype html>
     
     .query-short {
       display: block;
-      max-height: 4em;
-      overflow: hidden;
     }
     
     .query-full {
       display: none;
     }
+
+    pre.query.expanded .query-short {
+      display: none;
+    }
+    pre.query.expanded .query-full {
+      display: block;
+    }
     
     .show-full {
       margin-top: 6px;
     }
-    
-    /* Plan advice */
     
     /* Plan advice */
     .plan-advice {
@@ -589,7 +592,7 @@ const htmlTemplate = `<!doctype html>
   </section>
 
   <h2>Connections</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-connections" class="table-wrap collapsed">
   <table>
     <thead><tr><th>Database</th><th>State</th><th>Count</th></tr></thead>
     <tbody>
@@ -600,12 +603,12 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Activity) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Activity) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-connections">Show all</button></div>{{end}}
   </div>
   {{if .ConnSummary}}<p class="section-note">{{.ConnSummary}}</p>{{end}}
 
   <h2>Databases</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-databases" class="table-wrap collapsed">
   <table>
     <thead><tr><th>Name</th><th>Size, Mb</th><th>Tablespace</th><th>Connections</th></tr></thead>
     <tbody>
@@ -616,12 +619,12 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-databases">Show all</button></div>{{end}}
   </div>
   {{if .DBsSummary}}<p class="section-note">{{.DBsSummary}}</p>{{end}}
 
   <h2>Top tables by rows</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-tables-by-rows" class="table-wrap collapsed">
   <table>
     <thead><tr><th>Schema</th><th>Table</th><th>Rows</th></tr></thead>
     <tbody>
@@ -632,12 +635,12 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-tables-by-rows">Show all</button></div>{{end}}
   </div>
   {{/* No explicit summary for this table to avoid noise */}}
 
   <h2>Top tables by size</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-tables-by-size" class="table-wrap collapsed">
   <table>
     <thead><tr><th>Schema</th><th>Table</th><th>Size, Mb</th></tr></thead>
     <tbody>
@@ -648,12 +651,12 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-tables-by-size">Show all</button></div>{{end}}
   </div>
   {{/* No explicit summary for this table to avoid noise */}}
 
   <h2>Settings (subset)</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-settings" class="table-wrap collapsed">
   <table>
     <thead><tr><th>Name</th><th>Value</th><th>Unit</th><th>Source</th></tr></thead>
     <tbody>
@@ -664,11 +667,11 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-settings">Show all</button></div>{{end}}
   </div>
 
   <h2>Indexes (unused candidates)</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-index-unused" class="table-wrap collapsed">
   <table>
     <thead><tr><th>Schema</th><th>Table</th><th>Index</th><th>Size, Mb</th></tr></thead>
     <tbody>
@@ -679,12 +682,12 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-index-unused">Show all</button></div>{{end}}
   </div>
   <p class="section-note">{{.IndexUnusedSummary}}</p>
 
   <h2>Tables with lowest index usage</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-index-usage-low" class="table-wrap collapsed">
   <table>
     <thead><tr><th>Schema</th><th>Table</th><th>Index usage (%)</th><th>Rows</th></tr></thead>
     <tbody>
@@ -695,12 +698,12 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-index-usage-low">Show all</button></div>{{end}}
   </div>
   {{if .IndexUsageSummary}}<p class="section-note">{{.IndexUsageSummary}}</p>{{end}}
 
   <h2>Tables with index counts</h2>
-  <div class="table-wrap{{if gt (len .Res.TablesWithIndexCount) 10}} collapsed{{end}}">
+  <div id="table-index-counts" class="table-wrap{{if gt (len .Res.TablesWithIndexCount) 10}} collapsed{{end}}">
     <table>
       <thead>
         <tr>
@@ -729,12 +732,12 @@ const htmlTemplate = `<!doctype html>
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+    {{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-index-counts">Show all</button></div>{{end}}
   </div>
 
   <h3>Cache hit ratio by database</h3>
   <p class="muted">Interpretation: closer to 100% is better. Values above ~99% are typical for OLTP workloads. Lower ratios indicate more disk reads; consider increasing shared_buffers, reviewing working set size, and improving indexing and query plans.</p>
-  <div class="table-wrap collapsed">
+  <div id="table-cache-hit" class="table-wrap collapsed">
   <table>
     <thead><tr><th>Database</th><th>blks_hit</th><th>blks_read</th><th>Hit ratio (%)</th></tr></thead>
     <tbody>
@@ -750,12 +753,12 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-cache-hit">Show all</button></div>{{end}}
   </div>
   {{if .CacheHitsSummary}}<p class="section-note">{{.CacheHitsSummary}}</p>{{end}}
 
   <h3>Connections by client</h3>
-  <div class="table-wrap collapsed">
+  <div id="table-clients" class="table-wrap collapsed">
   <table>
     <thead><tr>{{if .ShowHostname}}<th>Hostname</th>{{end}}<th>Address</th><th>User</th><th>Application</th><th>Connections</th></tr></thead>
     <tbody>
@@ -770,13 +773,13 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-clients">Show all</button></div>{{end}}
   </div>
   {{if .ClientsSummary}}<p class="section-note">{{.ClientsSummary}}</p>{{end}}
 
   {{if .Res.Extensions.PgStatStatements}}
   <h2>Top queries by total time</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-queries-total-time" class="table-wrap collapsed">
   <table>
   <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
     <tbody>
@@ -784,8 +787,8 @@ const htmlTemplate = `<!doctype html>
   	{{range $i, $q := .Res.Statements.TopByTotalTime}}
 		<tr class="{{if lt $i 3}}hot{{end}}">
 			<td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
-        <pre class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
-  			<button type="button" class="show-full">Show full</button>
+        <pre id="query-pre-total-{{$i}}" class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
+  			<button type="button" class="show-full" data-target="#query-pre-total-{{$i}}">Show full</button>
         {{if $q.Advice}}
         <div class="plan-advice">
           {{if $q.Advice.Highlights}}
@@ -801,8 +804,8 @@ const htmlTemplate = `<!doctype html>
             </ul>
           {{end}}
           {{if $q.Advice.Plan}}
-            <pre class="plan-pre" style="display:none">{{$q.Advice.Plan}}</pre>
-            <button type="button" class="show-plan">Show plan</button>
+            <pre id="plan-pre-total-{{$i}}" class="plan-pre" style="display:none">{{$q.Advice.Plan}}</pre>
+            <button type="button" class="show-plan" data-target="#plan-pre-total-{{$i}}">Show plan</button>
           {{end}}
         </div>
         {{end}}
@@ -814,11 +817,11 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-queries-total-time">Show all</button></div>{{end}}
 </div>
 
   <h2>Top queries by calls</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-queries-calls" class="table-wrap collapsed">
   <table>
   <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
     <tbody>
@@ -826,8 +829,8 @@ const htmlTemplate = `<!doctype html>
   	{{range $i, $q := .Res.Statements.TopByCalls}}
 			<tr class="{{if lt $i 3}}hot{{end}}">
 			<td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
-        <pre class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
-  			<button type="button" class="show-full">Show full</button>
+        <pre id="query-pre-calls-{{$i}}" class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
+  			<button type="button" class="show-full" data-target="#query-pre-calls-{{$i}}">Show full</button>
       </td>
 			</tr>{{end}}
     {{else}}
@@ -835,14 +838,14 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-queries-calls">Show all</button></div>{{end}}
 </div>
   {{else}}
   <p>pg_stat_statements is not enabled in this database. Install and preload it for detailed query insights.</p>
   {{end}}
 
   <h2>Blocking queries</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-blocking" class="table-wrap collapsed">
   <table>
     <thead><tr><th>DB</th><th>Blocked PID</th><th>Blocked for</th><th>Blocking PID</th><th>Blocking for</th><th>Blocked query</th><th>Blocking query</th></tr></thead>
     <tbody>
@@ -853,12 +856,12 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-blocking">Show all</button></div>{{end}}
 </div>
   <p class="section-note">{{.BlockingSummary}}</p>
 
   <h2>Long running queries (> 5m)</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-long-running" class="table-wrap collapsed">
   <table>
     <thead><tr><th>DB</th><th>PID</th><th>Duration</th><th>State</th><th>Query</th></tr></thead>
     <tbody>
@@ -869,12 +872,12 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-long-running">Show all</button></div>{{end}}
 </div>
   <p class="section-note">{{.LongRunningSummary}}</p>
 
   <h2>Autovacuum activities</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-autovacuum" class="table-wrap collapsed">
   <table>
     <thead><tr><th>DB</th><th>PID</th><th>Relation</th><th>Phase</th><th>Scanned</th><th>Total</th></tr></thead>
     <tbody>
@@ -885,13 +888,13 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  {{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-autovacuum">Show all</button></div>{{end}}
 </div>
   <p class="section-note">{{.AutovacSummary}}</p>
 
   {{if .Res.ReplicationStats}}
   <h2>Replication status</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-replication" class="table-wrap collapsed">
     <table>
       <thead>
         <tr>
@@ -923,7 +926,7 @@ const htmlTemplate = `<!doctype html>
 
   {{if .Res.LockStats}}
   <h2>Lock contention</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-locks" class="table-wrap collapsed">
     <table>
       <thead>
         <tr>
@@ -951,7 +954,7 @@ const htmlTemplate = `<!doctype html>
 
   {{if .Res.TempFileStats}}
   <h2>Temporary file usage</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-temp-files" class="table-wrap collapsed">
     <table>
       <thead>
         <tr>
@@ -977,7 +980,7 @@ const htmlTemplate = `<!doctype html>
 
   {{if .Res.ExtensionStats}}
   <h2>Installed extensions</h2>
-  <div class="table-wrap collapsed">
+  <div id="table-extensions" class="table-wrap collapsed">
     <table>
       <thead>
         <tr>
@@ -1004,65 +1007,34 @@ const htmlTemplate = `<!doctype html>
   <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
   <script>
-    // Simple, reliable button handling
-    document.addEventListener('DOMContentLoaded', function() {
-      // Hide all query-full elements initially
-      var fullEls = document.querySelectorAll('.query-full');
-      for (var i = 0; i < fullEls.length; i++) {
-        fullEls[i].style.display = 'none';
+    // Simple, robust, data-attribute driven event handling
+    document.body.addEventListener('click', function(e) {
+      var button = e.target.closest('button[data-target]');
+      if (!button) {
+        return;
+      }
+      
+      var target = document.querySelector(button.dataset.target);
+      if (!target) {
+        return;
       }
 
-      // Handle all button clicks
-      document.addEventListener('click', function(e) {
-        if (e.target.tagName !== 'BUTTON') return;
-
-        var button = e.target;
-
-        // Table row toggle buttons
-        if (button.classList.contains('toggle-rows')) {
-          var tableWrap = button.closest('.table-wrap');
-          if (tableWrap) {
-            tableWrap.classList.toggle('collapsed');
-            button.textContent = tableWrap.classList.contains('collapsed') ? 'Show all' : 'Show less';
-          }
-        }
-
-        // Query show full buttons
-        else if (button.classList.contains('show-full')) {
-          var td = button.closest('td');
-          if (td) {
-            var shortEl = td.querySelector('.query-short');
-            var fullEl = td.querySelector('.query-full');
-            var pre = td.querySelector('pre.query');
-
-            if (shortEl && fullEl) {
-              var isExpanded = fullEl.style.display === 'block';
-              fullEl.style.display = isExpanded ? 'none' : 'block';
-              shortEl.style.display = isExpanded ? 'block' : 'none';
-
-              if (pre) {
-                pre.classList.toggle('expanded', !isExpanded);
-              }
-
-              button.textContent = isExpanded ? 'Show full' : 'Show less';
-            }
-          }
-        }
-
-        // Plan show buttons
-        else if (button.classList.contains('show-plan')) {
-          var planAdvice = button.closest('.plan-advice');
-          if (planAdvice) {
-            var planPre = planAdvice.querySelector('.plan-pre');
-            if (planPre) {
-              var isExpanded = planPre.style.display === 'block';
-              planPre.style.display = isExpanded ? 'none' : 'block';
-              planPre.classList.toggle('expanded', !isExpanded);
-              button.textContent = isExpanded ? 'Show plan' : 'Hide plan';
-            }
-          }
-        }
-      });
+      // Toggle table rows
+      if (button.classList.contains('toggle-rows')) {
+        target.classList.toggle('collapsed');
+        button.textContent = target.classList.contains('collapsed') ? 'Show all' : 'Show less';
+      }
+      // Toggle full query text
+      else if (button.classList.contains('show-full')) {
+        target.classList.toggle('expanded');
+        button.textContent = target.classList.contains('expanded') ? 'Show less' : 'Show full';
+      }
+      // Toggle execution plan
+      else if (button.classList.contains('show-plan')) {
+        var isHidden = target.style.display === 'none';
+        target.style.display = isHidden ? 'block' : 'none';
+        button.textContent = isHidden ? 'Hide plan' : 'Show plan';
+      }
     });
   </script>
 </body>
