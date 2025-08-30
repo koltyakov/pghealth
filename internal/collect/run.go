@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -687,9 +688,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				return 0
 			}
 			vv := make([]float64, 0, len(vals))
-			for _, v := range vals {
-				vv = append(vv, v)
-			}
+			vv = append(vv, vals...)
 			// insertion sort is fine for <=20 elements
 			for i := 1; i < len(vv); i++ {
 				x := vv[i]
@@ -719,21 +718,47 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		callsMed := median(callsVals)
 		cphMed := median(cphVals)
 
+		// Dynamic threshold for what is considered "slow" based on volume.
+		// Baseline: 1000ms is slow. More calls/rows => stricter (lower) threshold, but never below 200ms.
+		calcThresholdMs := func(s Statement) float64 {
+			base := 1000.0
+			floor := 200.0
+			// Frequency factor relative to medians
+			ratio := 1.0
+			if cphMed > 0 && s.CallsPerHour > 0 {
+				ratio = s.CallsPerHour / cphMed
+			} else if cphMed == 0 && callsMed > 0 && s.Calls > 0 {
+				ratio = s.Calls / callsMed
+			}
+			freqMul := 1.0
+			// tiered tighten: 1.5x -> 0.85x, 3x -> 0.7x, 10x -> 0.5x
+			if ratio >= 10 {
+				freqMul = 0.5
+			} else if ratio >= 3 {
+				freqMul = 0.7
+			} else if ratio >= 1.5 {
+				freqMul = 0.85
+			}
+			// Rows factor (average rows per call)
+			rowsMul := 1.0
+			if s.Rows >= 10000 {
+				rowsMul = 0.7
+			} else if s.Rows >= 1000 {
+				rowsMul = 0.85
+			}
+			thr := base * freqMul * rowsMul
+			if thr < floor {
+				thr = floor
+			}
+			return thr
+		}
+
 		seenLocal := make(map[string]bool)
 		taken := 0
-		// A query is suspect if it is slow (mean >= 1s) or high-frequency (>= 1.5x median)
+		// A query is suspect if its mean time exceeds the dynamic threshold
 		isSuspect := func(s Statement) bool {
-			if s.MeanTime >= 1000.0 { // milliseconds
-				return true
-			}
-			// prefer CallsPerHour baseline if available
-			if cphMed > 0 && s.CallsPerHour >= 1.5*cphMed {
-				return true
-			}
-			if cphMed == 0 && callsMed > 0 && s.Calls >= 1.5*callsMed {
-				return true
-			}
-			return false
+			thr := calcThresholdMs(s)
+			return s.MeanTime >= thr
 		}
 		for i := 0; i < len(sts); i++ {
 			qTrim := strings.TrimSpace(sts[i].Query)
@@ -757,20 +782,48 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			}
 			var planRows pgx.Rows
 			var err error
-			// Parameterized query path: use PREPARE/EXPLAIN EXECUTE to avoid brittle substitutions
+			// Parameterized query path: use PREPARE/EXPLAIN EXECUTE with NULL args to avoid brittle substitutions
 			if strings.Contains(qTrim, "$") {
 				prepName := fmt.Sprintf("__pghealth_prep_%d", i)
 				ctxPrep, cancelPrep := context.WithTimeout(ctx, 3*time.Second)
 				_, errPrep := conn.Exec(ctxPrep, "PREPARE "+prepName+" AS "+qTrim)
 				cancelPrep()
 				if errPrep == nil {
+					// determine parameter count by max $N occurrence
+					maxParam := 0
+					matches := reParam.FindAllString(qTrim, -1)
+					for _, m := range matches {
+						if len(m) > 1 {
+							// m like $12
+							numStr := m[1:]
+							if n, errN := strconv.Atoi(numStr); errN == nil && n > maxParam {
+								maxParam = n
+							}
+						}
+					}
+					// build NULL argument list matching parameter count
+					argList := ""
+					if maxParam > 0 {
+						nulls := make([]string, maxParam)
+						for k := 0; k < maxParam; k++ {
+							nulls[k] = "NULL"
+						}
+						argList = "(" + strings.Join(nulls, ", ") + ")"
+					}
 					ctxPlan, cancel := context.WithTimeout(ctx, 5*time.Second)
-					planRows, err = conn.Query(ctxPlan, "EXPLAIN EXECUTE "+prepName)
+					planRows, err = conn.Query(ctxPlan, "EXPLAIN EXECUTE "+prepName+argList)
 					cancel()
 					// cleanup
 					ctxDel, cancelDel := context.WithTimeout(ctx, 1*time.Second)
 					_, _ = conn.Exec(ctxDel, "DEALLOCATE "+prepName)
 					cancelDel()
+					if err != nil {
+						// Fallback: replace parameters with NULL for a generic plan
+						qForExplain := reParam.ReplaceAllString(qTrim, "NULL")
+						ctxPlan2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
+						planRows, err = conn.Query(ctxPlan2, "EXPLAIN "+qForExplain)
+						cancel2()
+					}
 				} else {
 					// Fallback: replace parameters with NULL for a generic plan
 					qForExplain := reParam.ReplaceAllString(qTrim, "NULL")
@@ -927,7 +980,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			}
 			if advice.Plan != "" || len(advice.Suggestions) > 0 || len(advice.Highlights) > 0 {
 				sts[i].Advice = advice
-				sts[i].NeedsAttention = true
+				// Do not set NeedsAttention based on presence of a plan; it's governed by thresholds only.
 				if taken < limit {
 					taken++
 				}

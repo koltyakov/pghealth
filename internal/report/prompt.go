@@ -58,7 +58,7 @@ func WritePrompt(htmlOutPath string, res collect.Result, meta collect.Meta) (str
 	// Build data payload
 	pd := promptData{}
 
-	// Queries: include those with collected advice/plans from TopByTotalTime and TopByCalls
+	// Queries: include those from TopByTotalTime and TopByCalls (deduped)
 	// Truncate extremely long query texts and plans to keep the prompt manageable
 	const maxQueryTextLen = 8000
 	const maxPlanLen = 20000
@@ -69,11 +69,8 @@ func WritePrompt(htmlOutPath string, res collect.Result, meta collect.Meta) (str
 		}
 		return s
 	}
-	// Add a query to the payload if it isn't obviously already fast and unproblematic
+	// Add a query to the payload
 	addQuery := func(s collect.Statement) {
-		if s.Advice == nil && s.MeanTime > 0 && s.MeanTime < 2.0 {
-			return // skip obviously fast queries to reduce prompt size
-		}
 		pq := promptQuery{
 			Text:      trimLong(s.Query, maxQueryTextLen),
 			TotalTime: s.TotalTime,
@@ -128,16 +125,9 @@ func WritePrompt(htmlOutPath string, res collect.Result, meta collect.Meta) (str
 		}
 		return ai.Calls > aj.Calls
 	})
-	// Add up to cap
-	added := 0
+	// Add all (no artificial cap)
 	for _, s := range list {
 		addQuery(s)
-		if len(pd.Queries) > added {
-			added++
-		}
-		if added >= 25 {
-			break
-		}
 	}
 
 	// Build set of relevant tables from included queries' plans/highlights
@@ -156,8 +146,9 @@ func WritePrompt(htmlOutPath string, res collect.Result, meta collect.Meta) (str
 		}
 	}
 
-	// Build DB->Schema->Tables with indexes DDL (ignore small tables unless referenced)
-	const minTableSizeForIndexes int64 = 128 * 1024 * 1024 // 128MB stricter threshold
+	// Build DB->Schema->Tables with indexes DDL
+	// Include tables only if large-by-rows OR referenced in top query plans
+	const minTableRows int64 = 100_000 // include tables with >= 100k live rows
 	// map schema.table -> []DDL (deduped)
 	idxDDL := map[string][]string{}
 	seenDDL := map[string]struct{}{}
@@ -174,8 +165,8 @@ func WritePrompt(htmlOutPath string, res collect.Result, meta collect.Meta) (str
 		idxDDL[key] = append(idxDDL[key], ddl)
 		seenDDL[k2] = struct{}{}
 	}
-	shouldIncludeIdx := func(schema, table string, size int64) bool {
-		if size >= minTableSizeForIndexes {
+	shouldIncludeTable := func(schema, table string, rowCount int64) bool {
+		if rowCount >= minTableRows {
 			return true
 		}
 		if _, ok := relevantTables[strings.ToLower(schema+"."+table)]; ok {
@@ -193,12 +184,12 @@ func WritePrompt(htmlOutPath string, res collect.Result, meta collect.Meta) (str
 			if byDB[dbName] == nil {
 				byDB[dbName] = map[string][]promptTable{}
 			}
-			pt := promptTable{Name: t.Name, SizeBytes: t.SizeBytes, BloatPct: t.BloatPct, RowCount: t.RowCount, DeadRows: t.DeadRows}
-			if shouldIncludeIdx(t.Schema, t.Name, t.SizeBytes) {
+			if shouldIncludeTable(t.Schema, t.Name, t.RowCount) {
+				pt := promptTable{Name: t.Name, SizeBytes: t.SizeBytes, BloatPct: t.BloatPct, RowCount: t.RowCount, DeadRows: t.DeadRows}
 				key := strings.ToLower(t.Schema + "." + t.Name)
 				pt.Indexes = append(pt.Indexes, idxDDL[key]...)
+				byDB[dbName][t.Schema] = append(byDB[dbName][t.Schema], pt)
 			}
-			byDB[dbName][t.Schema] = append(byDB[dbName][t.Schema], pt)
 		}
 	} else {
 		for _, t := range res.Tables {
@@ -206,12 +197,12 @@ func WritePrompt(htmlOutPath string, res collect.Result, meta collect.Meta) (str
 			if byDB[dbName] == nil {
 				byDB[dbName] = map[string][]promptTable{}
 			}
-			pt := promptTable{Name: t.Name, SizeBytes: t.SizeBytes, BloatPct: t.BloatPct, RowCount: t.NLiveTup, DeadRows: t.NDeadTup}
-			if shouldIncludeIdx(t.Schema, t.Name, t.SizeBytes) {
+			if shouldIncludeTable(t.Schema, t.Name, t.NLiveTup) {
+				pt := promptTable{Name: t.Name, SizeBytes: t.SizeBytes, BloatPct: t.BloatPct, RowCount: t.NLiveTup, DeadRows: t.NDeadTup}
 				key := strings.ToLower(t.Schema + "." + t.Name)
 				pt.Indexes = append(pt.Indexes, idxDDL[key]...)
+				byDB[dbName][t.Schema] = append(byDB[dbName][t.Schema], pt)
 			}
-			byDB[dbName][t.Schema] = append(byDB[dbName][t.Schema], pt)
 		}
 	}
 	// materialize hierarchy
