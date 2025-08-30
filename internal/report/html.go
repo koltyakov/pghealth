@@ -134,20 +134,23 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	}()
 	indexUnusedSummary := func() string {
 		total := len(res.IndexUnused)
-		large := len(largeUnused)
-		if total == 0 && large == 0 {
+		if total == 0 {
 			return "Healthy: no unused indexes detected."
-		}
-		if large > 0 {
-			if large == 1 {
-				return "1 large unused index detected; validate and consider dropping."
-			}
-			return fmt.Sprintf("%d large unused indexes detected; validate with workload owners before dropping.", large)
 		}
 		if total == 1 {
 			return "1 unused index candidate detected; validate and consider dropping."
 		}
 		return fmt.Sprintf("%d unused index candidates detected; validate with workload owners before dropping.", total)
+	}()
+	largeUnusedSummary := func() string {
+		large := len(largeUnused)
+		if large == 0 {
+			return ""
+		}
+		if large == 1 {
+			return "1 large unused index detected; validate and consider dropping."
+		}
+		return fmt.Sprintf("%d large unused indexes detected; validate with workload owners before dropping.", large)
 	}()
 	indexUsageSummary := func() string {
 		if len(res.IndexUsageLow) == 0 {
@@ -271,13 +274,14 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		DBsSummary         string
 		CacheHitsSummary   string
 		IndexUnusedSummary string
+		LargeUnusedSummary string
 		IndexUsageSummary  string
 		ClientsSummary     string
 		BlockingSummary    string
 		LongRunningSummary string
 		AutovacSummary     string
 	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize, LargeUnused: largeUnused,
-		ConnSummary: connSummary, DBsSummary: dbsSummary, CacheHitsSummary: cacheHitsSummary, IndexUnusedSummary: indexUnusedSummary,
+		ConnSummary: connSummary, DBsSummary: dbsSummary, CacheHitsSummary: cacheHitsSummary, IndexUnusedSummary: indexUnusedSummary, LargeUnusedSummary: largeUnusedSummary,
 		IndexUsageSummary: indexUsageSummary, ClientsSummary: clientsSummary, BlockingSummary: blockingSummary, LongRunningSummary: longRunningSummary, AutovacSummary: autovacSummary}
 	return tmpl.Execute(f, data)
 }

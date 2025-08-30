@@ -514,24 +514,32 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		}
 	}
 
-	// Best-effort EXPLAIN plan collection and analysis for top slow queries (safe subset only)
-	if len(res.Statements.TopByTotalTime) > 0 {
+	// Best-effort EXPLAIN plan collection and analysis for heavy queries (safe subset only)
+	collectAdvice := func(sts []Statement) []Statement {
+		// limit per list
 		limit := 5
-		if len(res.Statements.TopByTotalTime) < limit {
-			limit = len(res.Statements.TopByTotalTime)
+		if len(sts) < limit {
+			limit = len(sts)
 		}
+		// avoid duplicate EXPLAIN for identical queries across lists
+		seen := make(map[string]bool)
 		for i := 0; i < limit; i++ {
-			q := res.Statements.TopByTotalTime[i].Query
-			qUp := strings.ToUpper(strings.TrimSpace(q))
+			q := sts[i].Query
+			qTrim := strings.TrimSpace(q)
+			if seen[qTrim] {
+				continue
+			}
+			seen[qTrim] = true
+			qUp := strings.ToUpper(qTrim)
 			if !strings.HasPrefix(qUp, "SELECT") {
 				continue
 			}
-			if strings.Contains(q, "$1") || strings.Contains(q, "$2") || strings.Contains(q, "$") {
+			if strings.Contains(qTrim, "$1") || strings.Contains(qTrim, "$2") || strings.Contains(qTrim, "$") {
 				continue
 			}
 			// Run EXPLAIN safely with short timeout
 			ctxPlan, cancel := context.WithTimeout(ctx, 2*time.Second)
-			planRows, err := conn.Query(ctxPlan, "EXPLAIN "+q)
+			planRows, err := conn.Query(ctxPlan, "EXPLAIN "+qTrim)
 			cancel()
 			if err != nil {
 				continue
@@ -540,18 +548,19 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			var seqOn []string
 			hasSort := false
 			hasJoin := false
+			joinType := ""
+			hasBitmap := false
+			hasParallel := false
+			hasCTE := false
 			for planRows.Next() {
 				var line string
 				_ = planRows.Scan(&line)
 				planLines = append(planLines, line)
-				// Detect Seq Scan on table
 				up := strings.ToUpper(line)
 				if strings.Contains(up, "SEQ SCAN ON ") {
-					// extract table name after 'on '
 					idx := strings.Index(up, "SEQ SCAN ON ")
 					if idx >= 0 {
 						rest := strings.TrimSpace(line[idx+len("SEQ SCAN ON "):])
-						// take up to first space or '(' character
 						name := rest
 						if j := strings.IndexAny(rest, " (\t"); j >= 0 {
 							name = rest[:j]
@@ -562,8 +571,29 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				if strings.HasPrefix(strings.TrimSpace(up), "SORT ") || strings.Contains(up, " SORT ") {
 					hasSort = true
 				}
-				if strings.Contains(up, " JOIN ") {
+				if strings.Contains(up, "BITMAP ") {
+					hasBitmap = true
+				}
+				if strings.Contains(up, " NESTED LOOP ") {
 					hasJoin = true
+					joinType = "Nested Loop"
+				} else if strings.Contains(up, " HASH JOIN ") {
+					hasJoin = true
+					joinType = "Hash Join"
+				} else if strings.Contains(up, " MERGE JOIN ") {
+					hasJoin = true
+					joinType = "Merge Join"
+				} else if strings.Contains(up, " JOIN ") {
+					hasJoin = true
+					if joinType == "" {
+						joinType = "Join"
+					}
+				}
+				if strings.Contains(up, "PARALLEL ") {
+					hasParallel = true
+				}
+				if strings.Contains(up, "CTE ") || strings.Contains(up, "WITH ") {
+					hasCTE = true
 				}
 			}
 			planRows.Close()
@@ -575,14 +605,26 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			for _, tname := range seqOn {
 				advice.Highlights = append(advice.Highlights, fmt.Sprintf("Seq Scan on %s", tname))
 			}
+			if hasBitmap {
+				advice.Highlights = append(advice.Highlights, "Bitmap scan present")
+			}
 			if hasSort {
 				advice.Highlights = append(advice.Highlights, "Explicit Sort in plan")
 			}
 			if hasJoin {
-				advice.Highlights = append(advice.Highlights, "Join present")
+				if joinType != "" {
+					advice.Highlights = append(advice.Highlights, joinType)
+				} else {
+					advice.Highlights = append(advice.Highlights, "Join present")
+				}
+			}
+			if hasParallel {
+				advice.Highlights = append(advice.Highlights, "Parallel operation(s)")
+			}
+			if hasCTE {
+				advice.Highlights = append(advice.Highlights, "CTE in plan")
 			}
 			// Suggestions
-			// Helper to find table stats and index presence by table name (best-effort, schema-agnostic)
 			findTable := func(name string) (TableStat, bool) {
 				for _, t := range res.Tables {
 					if strings.EqualFold(t.Name, name) {
@@ -619,23 +661,38 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 					}
 				}
 			}
+			if hasBitmap {
+				advice.Suggestions = append(advice.Suggestions, "Consider composite/covering indexes to reduce Bitmap Heap rechecks when appropriate.")
+				advice.CanBeIndexed = true
+			}
 			if hasSort {
-				advice.Suggestions = append(advice.Suggestions, "Add or adjust an index matching ORDER BY to avoid Sort when appropriate.")
+				advice.Suggestions = append(advice.Suggestions, "Add or adjust an index matching ORDER BY to avoid Sort when appropriate; review work_mem as needed.")
 				advice.CanBeIndexed = true
 			}
 			if hasJoin {
-				advice.Suggestions = append(advice.Suggestions, "Ensure join keys are indexed on both sides (or use suitable composite indexes).")
+				advice.Suggestions = append(advice.Suggestions, "Ensure join keys are indexed on both sides (consider composite indexes for multi-column joins).")
 				advice.CanBeIndexed = true
+			}
+			if hasCTE {
+				advice.Suggestions = append(advice.Suggestions, "If CTE is not reused, consider inlining it (PostgreSQL may materialize it depending on version/settings).")
+				advice.CanBeRefactored = true
 			}
 			if !advice.CanBeIndexed && len(seqOn) > 0 {
 				advice.CanBeRefactored = true
 				advice.Suggestions = append(advice.Suggestions, "Query uses sequential scans but no clear index path was found. Consider refactoring the query for better performance.")
 			}
 			if advice.Plan != "" || len(advice.Suggestions) > 0 || len(advice.Highlights) > 0 {
-				res.Statements.TopByTotalTime[i].Advice = advice
-				res.Statements.TopByTotalTime[i].NeedsAttention = true
+				sts[i].Advice = advice
+				sts[i].NeedsAttention = true
 			}
 		}
+		return sts
+	}
+	if len(res.Statements.TopByTotalTime) > 0 {
+		res.Statements.TopByTotalTime = collectAdvice(res.Statements.TopByTotalTime)
+	}
+	if len(res.Statements.TopByCalls) > 0 {
+		res.Statements.TopByCalls = collectAdvice(res.Statements.TopByCalls)
 	}
 
 	// Healthchecks collection

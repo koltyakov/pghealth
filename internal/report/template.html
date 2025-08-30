@@ -393,12 +393,7 @@
         </tr>
       </thead>
       <tbody>
-        {{if .Res.CacheHits}}
-        {{/* filter rows with zero total */}}
-        {{- $rows := 0 -}}
-        {{- range .Res.CacheHits -}}
-        {{- $total := (printf "%d" (add .BlksHit .BlksRead)) -}}
-        {{- end -}}
+  {{if .Res.CacheHits}}
         {{range .Res.CacheHits}}{{if gt (add .BlksHit .BlksRead) 0}}<tr>
           <td>{{.Datname}}</td>
           <td>{{fmtI64 .BlksHit}}</td>
@@ -488,18 +483,12 @@
         </tr>
       </thead>
       <tbody>
-        {{if .Res.IndexUnused}}
         {{range .Res.IndexUnused}}<tr>
           <td>{{.Schema}}</td>
           <td>{{.Table}}</td>
           <td>{{.Name}}</td>
           <td>{{fmtBytes .SizeBytes}}</td>
         </tr>{{end}}
-        {{else}}
-        <tr>
-          <td colspan="4" class="muted">No data</td>
-        </tr>
-        {{end}}
       </tbody>
     </table>
     {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
@@ -564,38 +553,10 @@
     {{if gt (len .LargeUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
         data-target="#table-index-large-unused">Show all</button></div>{{end}}
   </div>
+  {{if .LargeUnusedSummary}}<p class="section-note">{{.LargeUnusedSummary}}</p>{{end}}
   {{end}}
 
-  <h2>Settings (subset)</h2>
-  <div id="table-settings" class="table-wrap collapsed">
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Value</th>
-          <th>Unit</th>
-          <th>Source</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{if .Res.Settings}}
-        {{range .Res.Settings}}<tr>
-          <td>{{.Name}}</td>
-          <td>{{.Val}}</td>
-          <td>{{.Unit}}</td>
-          <td>{{.Source}}</td>
-        </tr>{{end}}
-        {{else}}
-        <tr>
-          <td colspan="4" class="muted">No data</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-    {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-settings">Show all</button></div>{{end}}
-  </div>
-
+  
   <h2>Tables with index counts</h2>
   <div id="table-index-counts" class="table-wrap{{if gt (len .Res.TablesWithIndexCount) 10}} collapsed{{end}}">
     <table>
@@ -731,6 +692,26 @@
               class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
             {{if gt (len $q.Query) 200}}<button type="button" class="show-full"
               data-target="#query-pre-calls-{{$i}}">Show full</button>{{end}}
+            {{if $q.Advice}}
+            <div class="plan-advice">
+              {{if $q.Advice.Highlights}}
+              <h4>Plan highlights</h4>
+              <ul>
+                {{range $q.Advice.Highlights}}<li>{{.}}</li>{{end}}
+              </ul>
+              {{end}}
+              {{if $q.Advice.Suggestions}}
+              <h4>Suggestions</h4>
+              <ul>
+                {{range $q.Advice.Suggestions}}<li>{{.}}</li>{{end}}
+              </ul>
+              {{end}}
+              {{if $q.Advice.Plan}}
+              <pre id="plan-pre-calls-{{$i}}" class="plan-pre" style="display:none">{{$q.Advice.Plan}}</pre>
+              <button type="button" class="show-plan" data-target="#plan-pre-calls-{{$i}}">Show plan</button>
+              {{end}}
+            </div>
+            {{end}}
           </td>
         </tr>{{end}}
         {{else}}
