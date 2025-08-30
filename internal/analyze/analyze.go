@@ -19,6 +19,7 @@ type Analysis struct {
 type Finding struct {
 	Title       string
 	Severity    string // info, warn, rec
+	Code        string // short machine code for suppression
 	Description string
 	Action      string
 }
@@ -54,6 +55,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Overall cache hit could improve",
 				Severity:    "rec",
+				Code:        "cache-overall",
 				Description: fmt.Sprintf("Cluster-wide cache hit: %.1f%%", res.CacheHitOverall),
 				Action:      "Consider memory tuning and index coverage across busiest databases.",
 			})
@@ -88,6 +90,7 @@ func Run(res collect.Result) Analysis {
 		a.Recommendations = append(a.Recommendations, Finding{
 			Title:       "Long-running queries",
 			Severity:    "rec",
+			Code:        "long-running",
 			Description: fmt.Sprintf("%d active queries > 5m", len(res.LongRunning)),
 			Action:      "EXPLAIN ANALYZE top offenders; optimize plans, add indexes, break large batches.",
 		})
@@ -106,6 +109,7 @@ func Run(res collect.Result) Analysis {
 		a.Recommendations = append(a.Recommendations, Finding{
 			Title:       "Install pg_stat_statements",
 			Severity:    "rec",
+			Code:        "install-pgss",
 			Description: "pg_stat_statements is not installed. Without it, detailed query performance analysis is limited.",
 			Action:      "CREATE EXTENSION IF NOT EXISTS pg_stat_statements; and set shared_preload_libraries='pg_stat_statements' then restart.",
 		})
@@ -115,7 +119,7 @@ func Run(res collect.Result) Analysis {
 			Title:       "Limited privileges",
 			Severity:    "info",
 			Description: "Current role lacks superuser/pg_monitor; some stats may be unavailable.",
-			Action:      "Ask a DBA/DevOps to grant membership in pg_monitor for richer visibility.",
+			Action:      "Ask an admin to grant membership in pg_monitor for richer visibility.",
 		})
 	}
 
@@ -148,6 +152,7 @@ func Run(res collect.Result) Analysis {
 		a.Recommendations = append(a.Recommendations, Finding{
 			Title:       "Enable track_io_timing",
 			Severity:    "rec",
+			Code:        "enable-track-io",
 			Description: "track_io_timing is off; enabling provides better latency insights.",
 			Action:      "SET track_io_timing = on; then persist in postgresql.conf and reload.",
 		})
@@ -166,6 +171,7 @@ func Run(res collect.Result) Analysis {
 		a.Recommendations = append(a.Recommendations, Finding{
 			Title:       "wal_level is minimal",
 			Severity:    "rec",
+			Code:        "wal-level-minimal",
 			Description: "wal_level=minimal disables replication and can hinder PITR; production systems typically use 'replica' or 'logical'.",
 			Action:      "Set wal_level=replica (or logical if needed) and restart.",
 		})
@@ -176,6 +182,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "checkpoint_timeout is very low",
 				Severity:    "rec",
+				Code:        "checkpoint-timeout-low",
 				Description: fmt.Sprintf("checkpoint_timeout=%.0fs; frequent checkpoints may increase write amplification.", secs),
 				Action:      "Consider 5-15 minutes depending on workload; tune with max_wal_size.",
 			})
@@ -188,6 +195,7 @@ func Run(res collect.Result) Analysis {
 		a.Recommendations = append(a.Recommendations, Finding{
 			Title:       "effective_cache_size seems low vs shared_buffers",
 			Severity:    "rec",
+			Code:        "ecs-low-vs-sb",
 			Description: "effective_cache_size is typically 2-3x shared_buffers to reflect OS page cache.",
 			Action:      "Increase effective_cache_size to approximate available OS cache.",
 		})
@@ -253,6 +261,7 @@ func Run(res collect.Result) Analysis {
 		a.Recommendations = append(a.Recommendations, Finding{
 			Title:       "Unused large indexes",
 			Severity:    "rec",
+			Code:        "unused-large-indexes",
 			Description: fmt.Sprintf("%d indexes show zero scans; first examples: %s", len(res.IndexUnused), names),
 			Action:      "Validate with workload owners and drop truly unused indexes to reduce write/maintenance overhead.",
 		})
@@ -263,6 +272,7 @@ func Run(res collect.Result) Analysis {
 		a.Recommendations = append(a.Recommendations, Finding{
 			Title:       "Possible missing indexes",
 			Severity:    "rec",
+			Code:        "missing-indexes",
 			Description: "Some tables show heavy sequential scans with low index usage.",
 			Action:      "EXPLAIN problematic queries; create indexes on selective predicates/joins as appropriate.",
 		})
@@ -347,6 +357,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Slow queries use sequential scans",
 				Severity:    "rec",
+				Code:        "slow-seq-scans",
 				Description: fmt.Sprintf("Sequential scans detected on: %s", strings.Join(names, ", ")),
 				Action:      "Create or refine indexes on selective WHERE and JOIN columns; analyze tables; ensure statistics are up to date.",
 			})
@@ -355,6 +366,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Index improvements possible for slow queries",
 				Severity:    "rec",
+				Code:        "slow-index-improve",
 				Description: fmt.Sprintf("%d slow queries could be improved with new or better indexes.", canBeIndexedCount),
 				Action:      "Run EXPLAIN on slow queries to identify missing indexes on columns used in WHERE clauses, JOINs, or ORDER BY.",
 			})
@@ -363,6 +375,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Query refactoring needed for slow queries",
 				Severity:    "rec",
+				Code:        "slow-refactor",
 				Description: fmt.Sprintf("%d slow queries may need refactoring as indexes alone may not solve the performance issue.", canBeRefactoredCount),
 				Action:      "Analyze the execution plan of slow queries to understand the cause. Consider rewriting the query, breaking it into smaller parts, or using different join strategies.",
 			})
@@ -371,6 +384,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Sorting in slow queries may lack index support",
 				Severity:    "rec",
+				Code:        "slow-sorts",
 				Description: "Plans include Sort nodes for top slow queries.",
 				Action:      "Add or adjust indexes matching ORDER BY leading columns to enable sorted index scans where appropriate.",
 			})
@@ -379,6 +393,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Joins in slow queries may be missing indexes",
 				Severity:    "rec",
+				Code:        "slow-joins",
 				Description: "Join operations detected; missing or suboptimal indexes can cause hash/merge joins to spill or nested loops to scan many rows.",
 				Action:      "Ensure join key columns are indexed on both sides; consider composite indexes matching join + filter predicates.",
 			})
@@ -425,6 +440,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Tables with many indexes",
 				Severity:    "rec",
+				Code:        "too-many-indexes",
 				Description: fmt.Sprintf("%d tables have >10 indexes", tablesWithManyIndexes),
 				Action:      "Review index usage; consider dropping unused indexes to reduce write overhead and storage.",
 			})
@@ -463,6 +479,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Large unused indexes",
 				Severity:    "rec",
+				Code:        "large-unused-indexes",
 				Description: fmt.Sprintf("%d indexes >100MB with zero scans", largeUnusedIndexes),
 				Action:      "Consider dropping large unused indexes; monitor impact before removal.",
 			})
@@ -576,6 +593,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Useful extensions not installed",
 				Severity:    "rec",
+				Code:        "missing-extensions",
 				Description: fmt.Sprintf("Consider installing: %s", strings.Join(missing, ", ")),
 				Action:      "CREATE EXTENSION IF NOT EXISTS extension_name; (requires superuser or appropriate privileges)",
 			})
@@ -588,6 +606,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "shared_buffers may be too low",
 				Severity:    "rec",
+				Code:        "shared-buffers-low",
 				Description: "shared_buffers is at default value",
 				Action:      "Set shared_buffers to 25-40% of available RAM for dedicated PostgreSQL servers.",
 			})
@@ -610,7 +629,8 @@ func Run(res collect.Result) Analysis {
 			Title:       "High max_connections setting",
 			Severity:    "rec",
 			Description: fmt.Sprintf("max_connections=%d may be high", res.ConnInfo.MaxConnections),
-			Action:      "Consider using a connection pooler (pgbouncer) and reducing max_connections to 20-50.",
+			Action:      "Consider using a connection pooler (pgbouncer) and reducing max_connections to 50-100.",
+			Code:        "high-max-connections",
 		})
 	}
 
@@ -622,6 +642,7 @@ func Run(res collect.Result) Analysis {
 				Severity:    "rec",
 				Description: fmt.Sprintf("autovacuum_naptime=%.0fs", secs),
 				Action:      "Consider reducing to 20-60 seconds for more aggressive autovacuum scheduling.",
+				Code:        "autovacuum-naptime-high",
 			})
 		}
 	}
@@ -634,6 +655,7 @@ func Run(res collect.Result) Analysis {
 				Severity:    "rec",
 				Description: "maintenance_work_mem is low for VACUUM/REINDEX operations",
 				Action:      "Increase maintenance_work_mem to 256MB-1GB for better maintenance performance.",
+				Code:        "maintenance-work-mem-low",
 			})
 		}
 	}
@@ -644,6 +666,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "random_page_cost at default",
 				Severity:    "rec",
+				Code:        "random-page-cost-default",
 				Description: "random_page_cost=4.0 may not reflect modern storage",
 				Action:      "For SSD storage, consider reducing to 1.1-2.0; for HDD, 4.0 is usually appropriate.",
 			})
@@ -667,6 +690,7 @@ func Run(res collect.Result) Analysis {
 		a.Recommendations = append(a.Recommendations, Finding{
 			Title:       "SSL not enabled",
 			Severity:    "rec",
+			Code:        "ssl-off",
 			Description: "SSL encryption is not enabled for connections",
 			Action:      "Enable SSL for encrypted client connections; configure ssl=on and provide certificates.",
 		})
@@ -678,6 +702,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "No statement timeout configured",
 				Severity:    "rec",
+				Code:        "no-statement-timeout",
 				Description: "statement_timeout is disabled",
 				Action:      "Set statement_timeout to prevent runaway queries; consider 30s-5m depending on workload.",
 			})
@@ -690,6 +715,7 @@ func Run(res collect.Result) Analysis {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "No idle transaction timeout",
 				Severity:    "rec",
+				Code:        "no-idle-tx-timeout",
 				Description: "idle_in_transaction_session_timeout is disabled",
 				Action:      "Set idle_in_transaction_session_timeout to 10-60 minutes to prevent abandoned transactions.",
 			})
