@@ -297,6 +297,7 @@ type TempFileStat struct {
 }
 
 type ExtensionStat struct {
+	Database    string
 	Name        string
 	Version     string
 	Description string
@@ -1115,7 +1116,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// Extension statistics
+	// Extension statistics for current DB
 	if rows, err := conn.Query(ctx, `select e.extname, e.extversion, obj_description(e.oid, 'pg_extension'),
 			n.nspname
 		from pg_extension e
@@ -1124,10 +1125,45 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		for rows.Next() {
 			var es ExtensionStat
 			_ = rows.Scan(&es.Name, &es.Version, &es.Description, &es.Schema)
+			es.Database = res.ConnInfo.CurrentDB
 			res.ExtensionStats = append(res.ExtensionStats, es)
 		}
 		rows.Close()
 	}
+
+	// Per-DB extensions: if cfg.DBs provided, check each DB for installed extensions
+	if len(cfg.DBs) > 0 {
+		baseURL := cfg.URL
+		for _, db := range cfg.DBs {
+			// Skip current DB; already collected
+			if db == res.ConnInfo.CurrentDB {
+				continue
+			}
+			// Build URL for target DB (naive last path segment swap)
+			targetURL := swapDBInURL(baseURL, db)
+			if targetURL == "" {
+				continue
+			}
+			if c2, err := pgx.Connect(ctx, targetURL); err == nil {
+				if rows, err := c2.Query(ctx, `select e.extname, e.extversion, obj_description(e.oid, 'pg_extension'),
+					n.nspname
+				from pg_extension e
+				left join pg_namespace n on n.oid = e.extnamespace
+				order by e.extname`); err == nil {
+					for rows.Next() {
+						var es ExtensionStat
+						_ = rows.Scan(&es.Name, &es.Version, &es.Description, &es.Schema)
+						es.Database = db
+						res.ExtensionStats = append(res.ExtensionStats, es)
+					}
+					rows.Close()
+				}
+				c2.Close(ctx)
+			}
+		}
+	}
+
+	return res, nil
 
 	return res, nil
 }
@@ -1169,6 +1205,34 @@ func queryRow[T any](ctx context.Context, conn *pgx.Conn, sql string, dst *T) er
 	defer cancel()
 	row := conn.QueryRow(ctx2, sql)
 	return row.Scan(dst)
+}
+
+// swapDBInURL naively replaces the last path segment of a libpq URL with the target DB.
+// It keeps query params and credentials intact. If parsing fails, returns empty string.
+func swapDBInURL(url string, db string) string {
+	// Handle simple postgres://user:pass@host:port/db?params
+	// We avoid importing net/url to keep dependencies lean; do a minimal split.
+	// Find path start after host: the first '/' after '://' occurrence.
+	idx := strings.Index(url, "://")
+	if idx == -1 {
+		return ""
+	}
+	// find the first '/' after '://'
+	slash := strings.Index(url[idx+3:], "/")
+	if slash == -1 {
+		// no path -> append
+		return url + "/" + db
+	}
+	head := url[:idx+3+slash] // up to '/'
+	rest := url[idx+3+slash+1:]
+	// rest may contain db and query params
+	qmark := strings.Index(rest, "?")
+	if qmark == -1 {
+		// replace entire rest with db
+		return head + "/" + db
+	}
+	// keep query string
+	return head + "/" + db + rest[qmark:]
 }
 
 type pssOrder int

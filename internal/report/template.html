@@ -308,8 +308,8 @@
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-databases">Show all</button></div>{{end}}
+  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-databases">Show all</button></div>{{end}}
   </div>
   {{if .DBsSummary}}<p class="section-note">{{.DBsSummary}}</p>{{end}}
 
@@ -333,13 +333,13 @@
         </tr>{{end}}
         {{else}}
         <tr>
-          {{if .ShowDBTablesByRows}}<td colspan="4" class="muted">No data</td>{{else}}<td colspan="3" class="muted">No data</td>{{end}}
+          <td colspan="3" class="muted">No data</td>
         </tr>
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .Activity) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-connections">Show all</button></div>{{end}}
+  {{if gt (len .Activity) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-connections">Show all</button></div>{{end}}
   </div>
   {{if .ConnSummary}}<p class="section-note">{{.ConnSummary}}</p>{{end}}
 
@@ -373,8 +373,8 @@
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-clients">Show all</button></div>{{end}}
+  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-clients">Show all</button></div>{{end}}
   </div>
   {{if .ClientsSummary}}<p class="section-note">{{.ClientsSummary}}</p>{{end}}
 
@@ -407,8 +407,8 @@
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-cache-hit">Show all</button></div>{{end}}
+  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-cache-hit">Show all</button></div>{{end}}
   </div>
   {{if .CacheHitsSummary}}<p class="section-note">{{.CacheHitsSummary}}</p>{{end}}
 
@@ -433,13 +433,13 @@
         </tr>{{end}}{{end}}
         {{else}}
         <tr>
-          {{if .ShowDBTablesBySize}}<td colspan="4" class="muted">No data</td>{{else}}<td colspan="3" class="muted">No data</td>{{end}}
+          {{if .ShowDBTablesByRows}}<td colspan="4" class="muted">No data</td>{{else}}<td colspan="3" class="muted">No data</td>{{end}}
         </tr>
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-tables-by-rows">Show all</button></div>{{end}}
+  {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-tables-by-rows">Show all</button></div>{{end}}
   </div>
   {{/* No explicit summary for this table to avoid noise */}}
 
@@ -464,13 +464,13 @@
         </tr>{{end}}{{end}}
         {{else}}
         <tr>
-          <td colspan="3" class="muted">No data</td>
+          {{if .ShowDBTablesBySize}}<td colspan="4" class="muted">No data</td>{{else}}<td colspan="3" class="muted">No data</td>{{end}}
         </tr>
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-tables-by-size">Show all</button></div>{{end}}
+  {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-tables-by-size">Show all</button></div>{{end}}
   </div>
   {{/* No explicit summary for this table to avoid noise */}}
 
@@ -497,8 +497,8 @@
         </tr>{{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-index-unused">Show all</button></div>{{end}}
+  {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-index-unused">Show all</button></div>{{end}}
   </div>
   {{end}}
   <p class="section-note">{{.IndexUnusedSummary}}</p>
@@ -530,8 +530,8 @@
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-index-usage-low">Show all</button></div>{{end}}
+  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-index-usage-low">Show all</button></div>{{end}}
   </div>
   {{if .IndexUsageSummary}}<p class="section-note">{{.IndexUsageSummary}}</p>{{end}}
 
@@ -560,8 +560,8 @@
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .LargeUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-index-large-unused">Show all</button></div>{{end}}
+  {{if gt (len .LargeUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-index-large-unused">Show all</button></div>{{end}}
   </div>
   {{if .LargeUnusedSummary}}<p class="section-note">{{.LargeUnusedSummary}}</p>{{end}}
   {{end}}
@@ -584,11 +584,11 @@
       <tbody>
         {{if .Res.TablesWithIndexCount}}
         {{range .Res.TablesWithIndexCount}}
-        <tr{{if gt .BloatPct 20.0}} class="hot" {{end}}>
+        <tr{{if gt .BloatPct 20.0}} class="hot"{{end}}>
           {{if $.ShowDBIndexCounts}}<td>{{.Database}}</td>{{end}}
           <td>{{.Schema}}</td>
           <td>{{.Name}}</td>
-          <td{{if eq .IndexCount 0}} class="badge-attn" {{end}}>{{.IndexCount}}</td>
+          <td{{if eq .IndexCount 0}} class="badge-attn"{{end}}>{{.IndexCount}}</td>
             <td>{{fmtBytes .SizeBytes}}</td>
             <td>{{fmtThousands .RowCount}}</td>
             <td>{{printf "%.1f" .BloatPct}}%</td>
@@ -601,8 +601,8 @@
             {{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-index-counts">Show all</button></div>{{end}}
+  {{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-index-counts">Show all</button></div>{{end}}
   </div>
 
   {{if .Res.Extensions.PgStatStatements}}
@@ -615,8 +615,8 @@
     .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
   <div id="table-queries-total-time" class="table-wrap collapsed">
     <table>
-    <thead>
-  <tr>
+      <thead>
+        <tr>
           <th>Calls</th>
           <th>Calls/hr</th>
           <th>Total time</th>
@@ -628,7 +628,7 @@
       <tbody>
         {{if .Res.Statements.TopByTotalTime}}
         {{range $i, $q := .Res.Statements.TopByTotalTime}}
-  <tr class="{{if lt $i 3}}hot{{end}}">
+        <tr class="{{if lt $i 3}}hot{{end}}">
           <td class="nowrap">{{fmtF0 $q.Calls}}</td>
           <td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td>
           <td class="nowrap">{{fmtMs $q.TotalTime}}</td>
@@ -638,7 +638,7 @@
           <td>
             <pre id="query-pre-total-{{$i}}"
               class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
-            {{if gt (len $q.Query) 200}}<button type="button" class="show-full"
+            {{if gt (len $q.Query) 200}}<button type="button" class="show-full" onclick="pg_toggleFull(this)"
               data-target="#query-pre-total-{{$i}}">Show full</button>{{end}}
             {{if $q.Advice}}
             <div class="plan-advice">
@@ -656,7 +656,7 @@
               {{end}}
               {{if $q.Advice.Plan}}
               <pre id="plan-pre-total-{{$i}}" class="plan-pre" style="display:none">{{$q.Advice.Plan}}</pre>
-              <button type="button" class="show-plan" data-target="#plan-pre-total-{{$i}}">Show plan</button>
+              <button type="button" class="show-plan" onclick="pg_togglePlan(this)" data-target="#plan-pre-total-{{$i}}">Show plan</button>
               {{end}}
             </div>
             {{end}}
@@ -679,8 +679,8 @@
     .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
   <div id="table-queries-calls" class="table-wrap collapsed">
     <table>
-    <thead>
-  <tr>
+      <thead>
+        <tr>
           <th>Calls</th>
           <th>Calls/hr</th>
           <th>Total time</th>
@@ -692,7 +692,7 @@
       <tbody>
         {{if .Res.Statements.TopByCalls}}
         {{range $i, $q := .Res.Statements.TopByCalls}}
-  <tr class="{{if lt $i 3}}hot{{end}}">
+        <tr class="{{if lt $i 3}}hot{{end}}">
           <td class="nowrap">{{fmtF0 $q.Calls}}</td>
           <td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td>
           <td class="nowrap">{{fmtMs $q.TotalTime}}</td>
@@ -702,7 +702,7 @@
           <td>
             <pre id="query-pre-calls-{{$i}}"
               class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
-            {{if gt (len $q.Query) 200}}<button type="button" class="show-full"
+            {{if gt (len $q.Query) 200}}<button type="button" class="show-full" onclick="pg_toggleFull(this)"
               data-target="#query-pre-calls-{{$i}}">Show full</button>{{end}}
             {{if $q.Advice}}
             <div class="plan-advice">
@@ -720,12 +720,13 @@
               {{end}}
               {{if $q.Advice.Plan}}
               <pre id="plan-pre-calls-{{$i}}" class="plan-pre" style="display:none">{{$q.Advice.Plan}}</pre>
-              <button type="button" class="show-plan" data-target="#plan-pre-calls-{{$i}}">Show plan</button>
+              <button type="button" class="show-plan" onclick="pg_togglePlan(this)" data-target="#plan-pre-calls-{{$i}}">Show plan</button>
               {{end}}
             </div>
             {{end}}
           </td>
-        </tr>{{end}}
+        </tr>
+        {{end}}
         {{else}}
         <tr>
           <td colspan="6" class="muted">No data</td>
@@ -777,8 +778,8 @@
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-blocking">Show all</button></div>{{end}}
+  {{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-blocking">Show all</button></div>{{end}}
   </div>
   <p class="section-note">{{.BlockingSummary}}</p>
 
@@ -812,8 +813,8 @@
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-long-running">Show all</button></div>{{end}}
+  {{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-long-running">Show all</button></div>{{end}}
   </div>
   <p class="section-note">{{.LongRunningSummary}}</p>
 
@@ -847,8 +848,8 @@
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-autovacuum">Show all</button></div>{{end}}
+  {{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-autovacuum">Show all</button></div>{{end}}
   </div>
   <p class="section-note">{{.AutovacSummary}}</p>
 
@@ -878,8 +879,8 @@
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-settings">Show all</button></div>{{end}}
+  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-settings">Show all</button></div>{{end}}
   </div>
 
   {{if .Res.ReplicationStats}}
@@ -974,6 +975,15 @@
     <table>
       <thead>
         <tr>
+          {{/* Show Database column if entries come from multiple DBs */}}
+          {{- $showDB := false -}}
+          {{- if gt (len .Res.ExtensionStats) 0 -}}
+          {{- $first := (index .Res.ExtensionStats 0).Database -}}
+          {{- range .Res.ExtensionStats -}}
+          {{- if ne .Database $first -}}{{- $showDB = true -}}{{- end -}}
+          {{- end -}}
+          {{- end -}}
+          {{if $showDB}}<th>Database</th>{{end}}
           <th>Name</th>
           <th>Version</th>
           <th>Description</th>
@@ -983,6 +993,7 @@
       <tbody>
         {{range .Res.ExtensionStats}}
         <tr>
+          {{if $showDB}}<td>{{.Database}}</td>{{end}}
           <td>{{.Name}}</td>
           <td>{{.Version}}</td>
           <td>{{.Description}}</td>
@@ -998,43 +1009,45 @@
     .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
   <script>
-    document.addEventListener('DOMContentLoaded', function () {
-      document.body.addEventListener('click', function (e) {
-        var button = e.target.closest('button');
-        if (!button) {
-          return;
-        }
-
-        var targetSelector = button.getAttribute('data-target');
-        if (!targetSelector) {
-          return;
-        }
-
-        var targetElement = document.querySelector(targetSelector);
-        if (!targetElement) {
-          return;
-        }
-
-        // Handle 'Show all' / 'Show less' for tables
-        if (button.classList.contains('toggle-rows')) {
-          targetElement.classList.toggle('collapsed');
-          var isCollapsed = targetElement.classList.contains('collapsed');
-          button.textContent = isCollapsed ? 'Show all' : 'Show less';
-        }
-        // Handle 'Show full' / 'Show less' for queries
-        else if (button.classList.contains('show-full')) {
-          targetElement.classList.toggle('expanded');
-          var isExpanded = targetElement.classList.contains('expanded');
-          button.textContent = isExpanded ? 'Show less' : 'Show full';
-        }
-        // Handle 'Show plan' / 'Hide plan' for execution plans
-        else if (button.classList.contains('show-plan')) {
-          var isHidden = targetElement.style.display === 'none' || targetElement.style.display === '';
-          targetElement.style.display = isHidden ? 'block' : 'none';
-          button.textContent = isHidden ? 'Hide plan' : 'Show plan';
-        }
-      });
-    });
+    // Simple, explicit handlers for maximum cross-browser reliability
+    function pg_toggleRows(btn) {
+      var sel = btn && btn.getAttribute('data-target');
+      if (!sel) return false;
+      var el = document.querySelector(sel);
+      if (!el) return false;
+      if (el.classList.contains('collapsed')) {
+        el.classList.remove('collapsed');
+        btn.textContent = 'Show less';
+      } else {
+        el.classList.add('collapsed');
+        btn.textContent = 'Show all';
+      }
+      return false;
+    }
+    function pg_toggleFull(btn) {
+      var sel = btn && btn.getAttribute('data-target');
+      if (!sel) return false;
+      var el = document.querySelector(sel);
+      if (!el) return false;
+      if (el.classList.contains('expanded')) {
+        el.classList.remove('expanded');
+        btn.textContent = 'Show full';
+      } else {
+        el.classList.add('expanded');
+        btn.textContent = 'Show less';
+      }
+      return false;
+    }
+    function pg_togglePlan(btn) {
+      var sel = btn && btn.getAttribute('data-target');
+      if (!sel) return false;
+      var el = document.querySelector(sel);
+      if (!el) return false;
+      var isHidden = (el.style.display === '' || el.style.display === 'none');
+      el.style.display = isHidden ? 'block' : 'none';
+      btn.textContent = isHidden ? 'Hide plan' : 'Show plan';
+      return false;
+    }
   </script>
 </body>
 
