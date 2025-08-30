@@ -133,14 +133,21 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		return fmt.Sprintf("Attention: %d database(s) below 95%% cache hit (lowest %.2f%%). Consider memory/indexing improvements.", below, min)
 	}()
 	indexUnusedSummary := func() string {
-		n := len(res.IndexUnused)
-		if n == 0 {
-			return "Healthy: no large unused indexes detected."
+		total := len(res.IndexUnused)
+		large := len(largeUnused)
+		if total == 0 && large == 0 {
+			return "Healthy: no unused indexes detected."
 		}
-		if n == 1 {
+		if large > 0 {
+			if large == 1 {
+				return "1 large unused index detected; validate and consider dropping."
+			}
+			return fmt.Sprintf("%d large unused indexes detected; validate with workload owners before dropping.", large)
+		}
+		if total == 1 {
 			return "1 unused index candidate detected; validate and consider dropping."
 		}
-		return fmt.Sprintf("%d unused index candidates detected; validate with workload owners before dropping.", n)
+		return fmt.Sprintf("%d unused index candidates detected; validate with workload owners before dropping.", total)
 	}()
 	indexUsageSummary := func() string {
 		if len(res.IndexUsageLow) == 0 {

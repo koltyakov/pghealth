@@ -262,6 +262,24 @@
     {{end}}
   </section>
 
+  <!-- Databases first -->
+  <h2>Databases</h2>
+  <div id="table-databases" class="table-wrap collapsed">
+  <table>
+    <thead><tr><th>Name</th><th>Size</th><th>Tablespace</th><th>Connections</th></tr></thead>
+    <tbody>
+    {{if .Res.DBs}}
+      {{range .Res.DBs}}<tr><td>{{.Name}}</td><td>{{fmtBytes .SizeBytes}}</td><td>{{.Tablespaces}}</td><td>{{fmtInt .ConnCount}}</td></tr>{{end}}
+    {{else}}
+      <tr><td colspan="4" class="muted">No data</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-databases">Show all</button></div>{{end}}
+  </div>
+  {{if .DBsSummary}}<p class="section-note">{{.DBsSummary}}</p>{{end}}
+
+  <!-- Connections grouped with connections by client -->
   <h2>Connections</h2>
   <div id="table-connections" class="table-wrap collapsed">
   <table>
@@ -278,21 +296,47 @@
   </div>
   {{if .ConnSummary}}<p class="section-note">{{.ConnSummary}}</p>{{end}}
 
-  <h2>Databases</h2>
-  <div id="table-databases" class="table-wrap collapsed">
+  <h3>Connections by client</h3>
+  <div id="table-clients" class="table-wrap collapsed">
   <table>
-    <thead><tr><th>Name</th><th>Size</th><th>Tablespace</th><th>Connections</th></tr></thead>
+    <thead><tr>{{if .ShowHostname}}<th>Hostname</th>{{end}}<th>Address</th><th>User</th><th>Application</th><th>Connections</th></tr></thead>
     <tbody>
-    {{if .Res.DBs}}
-      {{range .Res.DBs}}<tr><td>{{.Name}}</td><td>{{fmtBytes .SizeBytes}}</td><td>{{.Tablespaces}}</td><td>{{fmtInt .ConnCount}}</td></tr>{{end}}
+    {{if .Res.ConnectionsByClient}}
+      {{range .Res.ConnectionsByClient}}<tr>{{if $.ShowHostname}}<td>{{.Hostname}}</td>{{end}}<td>{{.Address}}</td><td>{{.User}}</td><td>{{.Application}}</td><td>{{fmtInt .Count}}</td></tr>{{end}}
+    {{else}}
+      {{if .ShowHostname}}
+        <tr><td colspan="5" class="muted">No data</td></tr>
+      {{else}}
+        <tr><td colspan="4" class="muted">No data</td></tr>
+      {{end}}
+    {{end}}
+    </tbody>
+  </table>
+  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-clients">Show all</button></div>{{end}}
+  </div>
+  {{if .ClientsSummary}}<p class="section-note">{{.ClientsSummary}}</p>{{end}}
+
+  <h2>Cache hit ratio by database</h2>
+  <p class="muted">Interpretation: closer to 100% is better. Values above ~99% are typical for OLTP workloads. Lower ratios indicate more disk reads; consider increasing shared_buffers, reviewing working set size, and improving indexing and query plans.</p>
+  <div id="table-cache-hit" class="table-wrap collapsed">
+  <table>
+    <thead><tr><th>Database</th><th>blks_hit</th><th>blks_read</th><th>Hit ratio</th></tr></thead>
+    <tbody>
+    {{if .Res.CacheHits}}
+      {{/* filter rows with zero total */}}
+      {{- $rows := 0 -}}
+      {{- range .Res.CacheHits -}}
+        {{- $total := (printf "%d" (add .BlksHit .BlksRead)) -}}
+      {{- end -}}
+  {{range .Res.CacheHits}}{{if gt (add .BlksHit .BlksRead) 0}}<tr><td>{{.Datname}}</td><td>{{fmtI64 .BlksHit}}</td><td>{{fmtI64 .BlksRead}}</td><td>{{fmtF2 .Ratio}}%</td></tr>{{end}}{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
     </tbody>
   </table>
-  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-databases">Show all</button></div>{{end}}
+  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-cache-hit">Show all</button></div>{{end}}
   </div>
-  {{if .DBsSummary}}<p class="section-note">{{.DBsSummary}}</p>{{end}}
+  {{if .CacheHitsSummary}}<p class="section-note">{{.CacheHitsSummary}}</p>{{end}}
 
   <h2>Top tables by rows</h2>
   <div id="table-tables-by-rows" class="table-wrap collapsed">
@@ -326,23 +370,11 @@
   </div>
   {{/* No explicit summary for this table to avoid noise */}}
 
-  <h2>Settings (subset)</h2>
-  <div id="table-settings" class="table-wrap collapsed">
-  <table>
-    <thead><tr><th>Name</th><th>Value</th><th>Unit</th><th>Source</th></tr></thead>
-    <tbody>
-    {{if .Res.Settings}}
-  {{range .Res.Settings}}<tr><td>{{.Name}}</td><td>{{.Val}}</td><td>{{.Unit}}</td><td>{{.Source}}</td></tr>{{end}}
-    {{else}}
-      <tr><td colspan="4" class="muted">No data</td></tr>
-    {{end}}
-    </tbody>
-  </table>
-  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-settings">Show all</button></div>{{end}}
-  </div>
+  
 
+  {{if .Res.IndexUnused}}
   <h2>Indexes (unused candidates)</h2>
-  <div id="table-index-unused" class="table-wrap collapsed">
+  <div id="table-index-unused" class="table-wrap{{if gt (len .Res.IndexUnused) 10}} collapsed{{end}}">
   <table>
     <thead><tr><th>Schema</th><th>Table</th><th>Index</th><th>Size</th></tr></thead>
     <tbody>
@@ -355,6 +387,7 @@
   </table>
   {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-index-unused">Show all</button></div>{{end}}
   </div>
+  {{end}}
   <p class="section-note">{{.IndexUnusedSummary}}</p>
 
   {{if .LargeUnused}}
@@ -384,13 +417,55 @@
   </div>
   {{end}}
 
+  <!-- Settings and extensions grouped at the end -->
+  {{if .Res.ExtensionStats}}
+  <h2>Installed extensions</h2>
+  <div id="table-extensions" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Version</th>
+          <th>Description</th>
+          <th>Schema</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.ExtensionStats}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td>{{.Version}}</td>
+          <td>{{.Description}}</td>
+          <td>{{.Schema}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  <h2>Settings (subset)</h2>
+  <div id="table-settings" class="table-wrap collapsed">
+  <table>
+    <thead><tr><th>Name</th><th>Value</th><th>Unit</th><th>Source</th></tr></thead>
+    <tbody>
+    {{if .Res.Settings}}
+  {{range .Res.Settings}}<tr><td>{{.Name}}</td><td>{{.Val}}</td><td>{{.Unit}}</td><td>{{.Source}}</td></tr>{{end}}
+    {{else}}
+      <tr><td colspan="4" class="muted">No data</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-settings">Show all</button></div>{{end}}
+  </div>
+
   <h2>Tables with lowest index usage</h2>
   <div id="table-index-usage-low" class="table-wrap collapsed">
   <table>
-    <thead><tr><th>Schema</th><th>Table</th><th>Index usage (%)</th><th>Rows</th></tr></thead>
+    <thead><tr><th>Schema</th><th>Table</th><th>Index usage</th><th>Rows</th></tr></thead>
     <tbody>
     {{if .Res.IndexUsageLow}}
-      {{range .Res.IndexUsageLow}}<tr><td>{{.Schema}}</td><td>{{.Table}}</td><td>{{fmtF2 .IndexUsagePct}}</td><td>{{fmtI64 .Rows}}</td></tr>{{end}}
+      {{range .Res.IndexUsageLow}}<tr><td>{{.Schema}}</td><td>{{.Table}}</td><td>{{fmtF2 .IndexUsagePct}}%</td><td>{{fmtI64 .Rows}}</td></tr>{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
@@ -433,47 +508,9 @@
     {{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-index-counts">Show all</button></div>{{end}}
   </div>
 
-  <h3>Cache hit ratio by database</h3>
-  <p class="muted">Interpretation: closer to 100% is better. Values above ~99% are typical for OLTP workloads. Lower ratios indicate more disk reads; consider increasing shared_buffers, reviewing working set size, and improving indexing and query plans.</p>
-  <div id="table-cache-hit" class="table-wrap collapsed">
-  <table>
-    <thead><tr><th>Database</th><th>blks_hit</th><th>blks_read</th><th>Hit ratio (%)</th></tr></thead>
-    <tbody>
-    {{if .Res.CacheHits}}
-      {{/* filter rows with zero total */}}
-      {{- $rows := 0 -}}
-      {{- range .Res.CacheHits -}}
-        {{- $total := (printf "%d" (add .BlksHit .BlksRead)) -}}
-      {{- end -}}
-      {{range .Res.CacheHits}}{{if gt (add .BlksHit .BlksRead) 0}}<tr><td>{{.Datname}}</td><td>{{fmtI64 .BlksHit}}</td><td>{{fmtI64 .BlksRead}}</td><td>{{fmtF2 .Ratio}}</td></tr>{{end}}{{end}}
-    {{else}}
-      <tr><td colspan="4" class="muted">No data</td></tr>
-    {{end}}
-    </tbody>
-  </table>
-  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-cache-hit">Show all</button></div>{{end}}
-  </div>
-  {{if .CacheHitsSummary}}<p class="section-note">{{.CacheHitsSummary}}</p>{{end}}
+  
 
-  <h3>Connections by client</h3>
-  <div id="table-clients" class="table-wrap collapsed">
-  <table>
-    <thead><tr>{{if .ShowHostname}}<th>Hostname</th>{{end}}<th>Address</th><th>User</th><th>Application</th><th>Connections</th></tr></thead>
-    <tbody>
-    {{if .Res.ConnectionsByClient}}
-      {{range .Res.ConnectionsByClient}}<tr>{{if $.ShowHostname}}<td>{{.Hostname}}</td>{{end}}<td>{{.Address}}</td><td>{{.User}}</td><td>{{.Application}}</td><td>{{fmtInt .Count}}</td></tr>{{end}}
-    {{else}}
-      {{if .ShowHostname}}
-        <tr><td colspan="5" class="muted">No data</td></tr>
-      {{else}}
-        <tr><td colspan="4" class="muted">No data</td></tr>
-      {{end}}
-    {{end}}
-    </tbody>
-  </table>
-  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-clients">Show all</button></div>{{end}}
-  </div>
-  {{if .ClientsSummary}}<p class="section-note">{{.ClientsSummary}}</p>{{end}}
+  
 
   {{if .Res.Extensions.PgStatStatements}}
     {{if .Res.Statements.SkippedReason}}
@@ -484,14 +521,14 @@
   {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
   <div id="table-queries-total-time" class="table-wrap collapsed">
   <table>
-  <thead><tr><th>Calls</th><th>Calls/hr</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
+  <thead><tr><th>Calls</th><th>Calls/hr</th><th>Total time</th><th>Mean time</th><th>Attention</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByTotalTime}}
   	{{range $i, $q := .Res.Statements.TopByTotalTime}}
 		<tr class="{{if lt $i 3}}hot{{end}}">
-			<td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
-        <pre id="query-pre-total-{{$i}}" class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
-  			<button type="button" class="show-full" data-target="#query-pre-total-{{$i}}">Show full</button>
+      <td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtMs $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
+            <pre id="query-pre-total-{{$i}}" class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
+  			{{if gt (len $q.Query) 200}}<button type="button" class="show-full" data-target="#query-pre-total-{{$i}}">Show full</button>{{end}}
         {{if $q.Advice}}
         <div class="plan-advice">
           {{if $q.Advice.Highlights}}
@@ -527,14 +564,14 @@
   {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
   <div id="table-queries-calls" class="table-wrap collapsed">
   <table>
-  <thead><tr><th>Calls</th><th>Calls/hr</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
+  <thead><tr><th>Calls</th><th>Calls/hr</th><th>Total time</th><th>Mean time</th><th>Attention</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByCalls}}
   	{{range $i, $q := .Res.Statements.TopByCalls}}
       <tr class="{{if lt $i 3}}hot{{end}}">
-      <td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
+  <td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtMs $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
         <pre id="query-pre-calls-{{$i}}" class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
-  			<button type="button" class="show-full" data-target="#query-pre-calls-{{$i}}">Show full</button>
+  			{{if gt (len $q.Query) 200}}<button type="button" class="show-full" data-target="#query-pre-calls-{{$i}}">Show full</button>{{end}}
       </td>
 			</tr>{{end}}
     {{else}}
