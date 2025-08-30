@@ -62,6 +62,119 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		activity = append(activity, it)
 	}
 
+	// Section summaries
+	connSummary := func() string {
+		if res.ConnInfo.MaxConnections > 0 {
+			pct := float64(res.TotalConnections) / float64(res.ConnInfo.MaxConnections) * 100
+			if pct >= 80 {
+				return fmt.Sprintf("Attention: %s/%s (%.0f%%) connections in use. Consider a pooler and tuning max_connections.", addThousands(strconv.Itoa(res.TotalConnections)), addThousands(strconv.Itoa(res.ConnInfo.MaxConnections)), pct)
+			}
+			return fmt.Sprintf("OK: %s/%s (%.0f%%) connections in use.", addThousands(strconv.Itoa(res.TotalConnections)), addThousands(strconv.Itoa(res.ConnInfo.MaxConnections)), pct)
+		}
+		return ""
+	}()
+	dbsSummary := func() string {
+		n := len(res.DBs)
+		if n == 0 {
+			return ""
+		}
+		top := res.DBs[0]
+		sizeMB := float64(top.SizeBytes) / 1024.0 / 1024.0
+		return fmt.Sprintf("Databases: %d total. Largest: %s (%.2f MB).", n, top.Name, sizeMB)
+	}()
+	cacheHitsSummary := func() string {
+		if len(res.CacheHits) == 0 {
+			return ""
+		}
+		below := 0
+		min := 101.0
+		totalWith := 0
+		for _, ch := range res.CacheHits {
+			if ch.BlksHit+ch.BlksRead == 0 {
+				continue
+			}
+			totalWith++
+			if ch.Ratio < min {
+				min = ch.Ratio
+			}
+			if ch.Ratio < 95.0 {
+				below++
+			}
+		}
+		if totalWith == 0 {
+			return ""
+		}
+		if below == 0 {
+			return fmt.Sprintf("OK: cache hit healthy across databases (lowest %.2f%%).", min)
+		}
+		return fmt.Sprintf("Attention: %d database(s) below 95%% cache hit (lowest %.2f%%). Consider memory/indexing improvements.", below, min)
+	}()
+	indexUnusedSummary := func() string {
+		n := len(res.IndexUnused)
+		if n == 0 {
+			return "OK: no large unused indexes detected."
+		}
+		if n == 1 {
+			return "1 unused index candidate detected; validate and consider dropping."
+		}
+		return fmt.Sprintf("%d unused index candidates detected; validate with workload owners before dropping.", n)
+	}()
+	indexUsageSummary := func() string {
+		if len(res.IndexUsageLow) == 0 {
+			return ""
+		}
+		below50, below80 := 0, 0
+		min := 100.0
+		for _, iu := range res.IndexUsageLow {
+			if iu.IndexUsagePct < min {
+				min = iu.IndexUsagePct
+			}
+			if iu.IndexUsagePct < 50 {
+				below50++
+			}
+			if iu.IndexUsagePct < 80 {
+				below80++
+			}
+		}
+		if below80 == 0 {
+			return "OK: index usage looks healthy for sampled tables."
+		}
+		return fmt.Sprintf("Attention: %d table(s) with index usage < 80%% (min %.2f%%). Review predicates and add indexes.", below80, min)
+	}()
+	clientsSummary := func() string {
+		if len(res.ConnectionsByClient) == 0 {
+			return ""
+		}
+		top := res.ConnectionsByClient[0]
+		who := top.Address
+		if top.Hostname != "" {
+			who = top.Hostname
+		}
+		suffix := "s"
+		if top.Count == 1 {
+			suffix = ""
+		}
+		return fmt.Sprintf("Top client: %s (%d connection%s).", who, top.Count, suffix)
+	}()
+	blockingSummary := func() string {
+		if len(res.Blocking) == 0 {
+			return "OK: no blocking detected."
+		}
+		return fmt.Sprintf("Attention: %d blocking relationship(s); longest blocked for %s.", len(res.Blocking), res.Blocking[0].BlockedDuration)
+	}()
+	longRunningSummary := func() string {
+		if len(res.LongRunning) == 0 {
+			return "OK: no active queries > 5 minutes."
+		}
+		return fmt.Sprintf("Attention: %d long-running query(ies); longest %s.", len(res.LongRunning), res.LongRunning[0].Duration)
+	}()
+	autovacSummary := func() string {
+		if len(res.AutoVacuum) == 0 {
+			return "OK: no autovacuum workers active now."
+		}
+		return fmt.Sprintf("Autovacuum workers: %d active. Ensure cost settings aren’t throttling large tables.", len(res.AutoVacuum))
+	}()
+
 	tmpl := template.Must(template.New("report").Funcs(template.FuncMap{
 		"since":    func(t time.Time) string { return time.Since(t).String() },
 		"add":      func(a, b int64) int64 { return a + b },
@@ -113,7 +226,19 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		Activity     []collect.Activity
 		TablesByRows []collect.TableStat
 		TablesBySize []collect.TableStat
-	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize}
+		// summaries
+		ConnSummary        string
+		DBsSummary         string
+		CacheHitsSummary   string
+		IndexUnusedSummary string
+		IndexUsageSummary  string
+		ClientsSummary     string
+		BlockingSummary    string
+		LongRunningSummary string
+		AutovacSummary     string
+	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize,
+		ConnSummary: connSummary, DBsSummary: dbsSummary, CacheHitsSummary: cacheHitsSummary, IndexUnusedSummary: indexUnusedSummary,
+		IndexUsageSummary: indexUsageSummary, ClientsSummary: clientsSummary, BlockingSummary: blockingSummary, LongRunningSummary: longRunningSummary, AutovacSummary: autovacSummary}
 	return tmpl.Execute(f, data)
 }
 
@@ -208,9 +333,9 @@ const htmlTemplate = `<!doctype html>
   <title>PostgreSQL Health Check Report</title>
   <style>
     body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin:24px; color:#111827;}
-  header{margin-bottom:24px}
-  h1{font-size:20px;margin:0 0 8px 0}
-  header > div{margin-top:4px}
+  header{margin-bottom:36px}
+  h1{font-size:20px;margin:0 0 12px 0}
+  header > div{margin-top:6px}
     h2{margin-top:24px;border-bottom:1px solid #e5e7eb;padding-bottom:4px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
   .card{border:1px solid #e5e7eb;padding:12px;background:#fff}
@@ -243,6 +368,7 @@ const htmlTemplate = `<!doctype html>
   .show-full{background:#fff;border:1px solid #d1d5db;padding:2px 6px;margin-top:6px;cursor:pointer}
   .nowrap{white-space:nowrap}
   .badge-attn{display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;padding:2px 6px;font-size:12px;border-radius:4px}
+  .section-note{margin:8px 0 0;color:#4b5563}
   /* Plan advice styling */
   .plan-advice{margin-top:8px;padding:8px;border:1px solid #e5e7eb;background:#f9fafb}
   .plan-advice h4{margin:0 0 6px;font-size:14px}
@@ -284,6 +410,7 @@ const htmlTemplate = `<!doctype html>
   </table>
   {{if gt (len .Activity) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
+  {{if .ConnSummary}}<p class="section-note">{{.ConnSummary}}</p>{{end}}
 
   <h2>Databases</h2>
   <div class="table-wrap collapsed">
@@ -299,6 +426,7 @@ const htmlTemplate = `<!doctype html>
   </table>
   {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
+  {{if .DBsSummary}}<p class="section-note">{{.DBsSummary}}</p>{{end}}
 
   <h2>Top tables by rows</h2>
   <div class="table-wrap collapsed">
@@ -314,6 +442,7 @@ const htmlTemplate = `<!doctype html>
   </table>
   {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
+  {{/* No explicit summary for this table to avoid noise */}}
 
   <h2>Top tables by size</h2>
   <div class="table-wrap collapsed">
@@ -329,6 +458,7 @@ const htmlTemplate = `<!doctype html>
   </table>
   {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
+  {{/* No explicit summary for this table to avoid noise */}}
 
   <h2>Settings (subset)</h2>
   <div class="table-wrap collapsed">
@@ -359,6 +489,7 @@ const htmlTemplate = `<!doctype html>
   </table>
   {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
+  <p class="section-note">{{.IndexUnusedSummary}}</p>
 
   <h2>Tables with lowest index usage</h2>
   <div class="table-wrap collapsed">
@@ -374,6 +505,7 @@ const htmlTemplate = `<!doctype html>
   </table>
   {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
+  {{if .IndexUsageSummary}}<p class="section-note">{{.IndexUsageSummary}}</p>{{end}}
 
   
 
@@ -397,6 +529,7 @@ const htmlTemplate = `<!doctype html>
   </table>
   {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
+  {{if .CacheHitsSummary}}<p class="section-note">{{.CacheHitsSummary}}</p>{{end}}
 
   <h3>Connections by client</h3>
   <div class="table-wrap collapsed">
@@ -416,6 +549,7 @@ const htmlTemplate = `<!doctype html>
   </table>
   {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
   </div>
+  {{if .ClientsSummary}}<p class="section-note">{{.ClientsSummary}}</p>{{end}}
 
   {{if .Res.Extensions.PgStatStatements}}
   <h2>Top queries by total time</h2>
@@ -487,6 +621,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>{{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
+  <p class="section-note">{{.BlockingSummary}}</p>
 
   <h2>Long running queries (> 5m)</h2>
   <div class="table-wrap collapsed">
@@ -500,6 +635,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>{{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
+  <p class="section-note">{{.LongRunningSummary}}</p>
 
   <h2>Autovacuum activities</h2>
   <div class="table-wrap collapsed">
@@ -513,6 +649,7 @@ const htmlTemplate = `<!doctype html>
     {{end}}
     </tbody>
   </table>{{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
+  <p class="section-note">{{.AutovacSummary}}</p>
 
   <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
