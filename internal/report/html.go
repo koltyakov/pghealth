@@ -305,6 +305,14 @@ func humanizeDuration(d time.Duration) string {
 	if d < 0 {
 		d = -d
 	}
+	// For very short durations, prefer milliseconds
+	if d < time.Second {
+		if d <= 0 {
+			return "0ms"
+		}
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	// For >= 1s, round to seconds and build a compact representation
 	d = d.Round(time.Second)
 	if d < time.Minute {
 		return d.String()
