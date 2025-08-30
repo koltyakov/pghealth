@@ -457,16 +457,11 @@ const htmlTemplate = `<!doctype html>
       border-radius: 4px;
       font-size: 12px;
       color: #374151;
-      transition: background-color 0.2s;
     }
     
     .toggle-rows:hover, .show-full:hover, .show-plan:hover {
       background: #f9fafb;
       border-color: #9ca3af;
-    }
-    
-    .toggle-rows:active, .show-full:active, .show-plan:active {
-      background: #f3f4f6;
     }
     
     /* Query display */
@@ -734,7 +729,8 @@ const htmlTemplate = `<!doctype html>
         {{end}}
       </tbody>
     </table>
-  </div>{{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+    {{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}
+  </div>
 
   <h3>Cache hit ratio by database</h3>
   <p class="muted">Interpretation: closer to 100% is better. Values above ~99% are typical for OLTP workloads. Lower ratios indicate more disk reads; consider increasing shared_buffers, reviewing working set size, and improving indexing and query plans.</p>
@@ -1008,79 +1004,66 @@ const htmlTemplate = `<!doctype html>
   <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
   <script>
-    (function() {
-      // Initialize query states on page load
-      document.addEventListener('DOMContentLoaded', function() {
-        var fullEls = document.querySelectorAll('.query-full');
-        for (var i = 0; i < fullEls.length; i++) {
-          fullEls[i].style.display = 'none';
+    // Simple, reliable button handling
+    document.addEventListener('DOMContentLoaded', function() {
+      // Hide all query-full elements initially
+      var fullEls = document.querySelectorAll('.query-full');
+      for (var i = 0; i < fullEls.length; i++) {
+        fullEls[i].style.display = 'none';
+      }
+
+      // Handle all button clicks
+      document.addEventListener('click', function(e) {
+        if (e.target.tagName !== 'BUTTON') return;
+
+        var button = e.target;
+
+        // Table row toggle buttons
+        if (button.classList.contains('toggle-rows')) {
+          var tableWrap = button.closest('.table-wrap');
+          if (tableWrap) {
+            tableWrap.classList.toggle('collapsed');
+            button.textContent = tableWrap.classList.contains('collapsed') ? 'Show all' : 'Show less';
+          }
         }
-        
-        // Add click event listeners to buttons
-        var buttons = document.querySelectorAll('button');
-        for (var i = 0; i < buttons.length; i++) {
-          buttons[i].addEventListener('click', handleButtonClick);
+
+        // Query show full buttons
+        else if (button.classList.contains('show-full')) {
+          var td = button.closest('td');
+          if (td) {
+            var shortEl = td.querySelector('.query-short');
+            var fullEl = td.querySelector('.query-full');
+            var pre = td.querySelector('pre.query');
+
+            if (shortEl && fullEl) {
+              var isExpanded = fullEl.style.display === 'block';
+              fullEl.style.display = isExpanded ? 'none' : 'block';
+              shortEl.style.display = isExpanded ? 'block' : 'none';
+
+              if (pre) {
+                pre.classList.toggle('expanded', !isExpanded);
+              }
+
+              button.textContent = isExpanded ? 'Show full' : 'Show less';
+            }
+          }
+        }
+
+        // Plan show buttons
+        else if (button.classList.contains('show-plan')) {
+          var planAdvice = button.closest('.plan-advice');
+          if (planAdvice) {
+            var planPre = planAdvice.querySelector('.plan-pre');
+            if (planPre) {
+              var isExpanded = planPre.style.display === 'block';
+              planPre.style.display = isExpanded ? 'none' : 'block';
+              planPre.classList.toggle('expanded', !isExpanded);
+              button.textContent = isExpanded ? 'Show plan' : 'Hide plan';
+            }
+          }
         }
       });
-      
-      // Handle button clicks
-      function handleButtonClick(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        var target = e.target;
-        
-        // Toggle table rows (Show all / Show less)
-        if (target.classList && target.classList.contains('toggle-rows')) {
-          var wrap = target.closest('.table-wrap');
-          if (!wrap || !wrap.classList) return;
-          
-          wrap.classList.toggle('collapsed');
-          target.textContent = wrap.classList.contains('collapsed') 
-            ? 'Show all' 
-            : 'Show less';
-          return;
-        }
-        
-        // Toggle query text (Show full / Show less)
-        if (target.classList && target.classList.contains('show-full')) {
-          var td = target.closest('td');
-          if (!td) return;
-          
-          var shortEl = td.querySelector('.query-short');
-          var fullEl = td.querySelector('.query-full');
-          var pre = td.querySelector('pre.query');
-          if (!shortEl || !fullEl) return;
-          
-          var expanded = fullEl.style.display === 'block';
-          fullEl.style.display = expanded ? 'none' : 'block';
-          shortEl.style.display = expanded ? 'block' : 'none';
-          
-          if (pre) {
-            pre.classList.toggle('expanded', !expanded);
-          }
-          
-          target.textContent = expanded ? 'Show full' : 'Show less';
-          return;
-        }
-        
-        // Toggle plan visibility (Show plan / Hide plan)
-        if (target.classList && target.classList.contains('show-plan')) {
-          var card = target.closest('.plan-advice');
-          if (!card) return;
-          
-          var pre = card.querySelector('.plan-pre');
-          if (!pre) return;
-          
-          var expanded = pre.style.display === 'block';
-          pre.style.display = expanded ? 'none' : 'block';
-          pre.classList.toggle('expanded', !expanded);
-          
-          target.textContent = expanded ? 'Show plan' : 'Hide plan';
-          return;
-        }
-      }
-    })();
+    });
   </script>
 </body>
 </html>`
