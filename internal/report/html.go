@@ -50,6 +50,14 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		}
 	}
 
+	// Derive large unused indexes subset (>100MB)
+	largeUnused := make([]collect.IndexUnused, 0)
+	for _, iu := range res.IndexUnused {
+		if iu.SizeBytes > 100*1024*1024 { // >100MB
+			largeUnused = append(largeUnused, iu)
+		}
+	}
+
 	// Filter connections activity to hide empty database/state entries and zero counts
 	activity := make([]collect.Activity, 0, len(res.Activity))
 	for _, it := range res.Activity {
@@ -79,8 +87,7 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 			return ""
 		}
 		top := res.DBs[0]
-		sizeMB := float64(top.SizeBytes) / 1024.0 / 1024.0
-		return fmt.Sprintf("Databases: %d total. Largest: %s (%.2f MB).", n, top.Name, sizeMB)
+		return fmt.Sprintf("Databases: %d total. Largest: %s (%s).", n, top.Name, fmtFloatPrecSep(float64(top.SizeBytes)/1024.0/1024.0, 2)+" MB")
 	}()
 	cacheHitsSummary := func() string {
 		if len(res.CacheHits) == 0 {
@@ -210,9 +217,6 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 			}
 			return template.HTMLEscapeString((func() string { return fmtFloatPrecSep(f, 2) + " " + units[i] })())
 		},
-		"fmtMB": func(b int64) string {
-			return fmtFloatPrecSep(float64(b)/1024.0/1024.0, 2)
-		},
 		"fmtInt":       func(n int) string { return addThousands(strconv.FormatInt(int64(n), 10)) },
 		"fmtI64":       func(n int64) string { return addThousands(strconv.FormatInt(n, 10)) },
 		"fmtF0":        func(f float64) string { return fmtFloatPrecSep(f, 0) },
@@ -228,6 +232,7 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		Activity     []collect.Activity
 		TablesByRows []collect.TableStat
 		TablesBySize []collect.TableStat
+		LargeUnused  []collect.IndexUnused
 		// summaries
 		ConnSummary        string
 		DBsSummary         string
@@ -238,7 +243,7 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		BlockingSummary    string
 		LongRunningSummary string
 		AutovacSummary     string
-	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize,
+	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize, LargeUnused: largeUnused,
 		ConnSummary: connSummary, DBsSummary: dbsSummary, CacheHitsSummary: cacheHitsSummary, IndexUnusedSummary: indexUnusedSummary,
 		IndexUsageSummary: indexUsageSummary, ClientsSummary: clientsSummary, BlockingSummary: blockingSummary, LongRunningSummary: longRunningSummary, AutovacSummary: autovacSummary}
 	return tmpl.Execute(f, data)
@@ -633,10 +638,10 @@ const htmlTemplate = `<!doctype html>
   <h2>Databases</h2>
   <div id="table-databases" class="table-wrap collapsed">
   <table>
-    <thead><tr><th>Name</th><th>Size, Mb</th><th>Tablespace</th><th>Connections</th></tr></thead>
+    <thead><tr><th>Name</th><th>Size</th><th>Tablespace</th><th>Connections</th></tr></thead>
     <tbody>
     {{if .Res.DBs}}
-      {{range .Res.DBs}}<tr><td>{{.Name}}</td><td>{{fmtMB .SizeBytes}}</td><td>{{.Tablespaces}}</td><td>{{fmtInt .ConnCount}}</td></tr>{{end}}
+      {{range .Res.DBs}}<tr><td>{{.Name}}</td><td>{{fmtBytes .SizeBytes}}</td><td>{{.Tablespaces}}</td><td>{{fmtInt .ConnCount}}</td></tr>{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
@@ -665,10 +670,10 @@ const htmlTemplate = `<!doctype html>
   <h2>Top tables by size</h2>
   <div id="table-tables-by-size" class="table-wrap collapsed">
   <table>
-    <thead><tr><th>Schema</th><th>Table</th><th>Size, Mb</th></tr></thead>
+    <thead><tr><th>Schema</th><th>Table</th><th>Size</th></tr></thead>
     <tbody>
     {{if .TablesBySize}}
-      {{range $i, $t := .TablesBySize}}{{if lt $i 100}}<tr><td>{{$t.Schema}}</td><td>{{$t.Name}}</td><td>{{fmtMB $t.SizeBytes}}</td></tr>{{end}}{{end}}
+      {{range $i, $t := .TablesBySize}}{{if lt $i 100}}<tr><td>{{$t.Schema}}</td><td>{{$t.Name}}</td><td>{{fmtBytes $t.SizeBytes}}</td></tr>{{end}}{{end}}
     {{else}}
       <tr><td colspan="3" class="muted">No data</td></tr>
     {{end}}
@@ -696,10 +701,10 @@ const htmlTemplate = `<!doctype html>
   <h2>Indexes (unused candidates)</h2>
   <div id="table-index-unused" class="table-wrap collapsed">
   <table>
-    <thead><tr><th>Schema</th><th>Table</th><th>Index</th><th>Size, Mb</th></tr></thead>
+    <thead><tr><th>Schema</th><th>Table</th><th>Index</th><th>Size</th></tr></thead>
     <tbody>
     {{if .Res.IndexUnused}}
-      {{range .Res.IndexUnused}}<tr><td>{{.Schema}}</td><td>{{.Table}}</td><td>{{.Name}}</td><td>{{fmtMB .SizeBytes}}</td></tr>{{end}}
+      {{range .Res.IndexUnused}}<tr><td>{{.Schema}}</td><td>{{.Table}}</td><td>{{.Name}}</td><td>{{fmtBytes .SizeBytes}}</td></tr>{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
@@ -708,6 +713,33 @@ const htmlTemplate = `<!doctype html>
   {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-index-unused">Show all</button></div>{{end}}
   </div>
   <p class="section-note">{{.IndexUnusedSummary}}</p>
+
+  {{if .LargeUnused}}
+  <h3>Large unused indexes (> 100 MB)</h3>
+  <div id="table-index-large-unused" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Schema</th>
+          <th>Table</th>
+          <th>Index</th>
+          <th>Size</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .LargeUnused}}
+        <tr>
+          <td>{{.Schema}}</td>
+          <td>{{.Table}}</td>
+          <td>{{.Name}}</td>
+          <td>{{fmtBytes .SizeBytes}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{if gt (len .LargeUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-index-large-unused">Show all</button></div>{{end}}
+  </div>
+  {{end}}
 
   <h2>Tables with lowest index usage</h2>
   <div id="table-index-usage-low" class="table-wrap collapsed">
