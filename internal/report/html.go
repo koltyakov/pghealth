@@ -213,6 +213,10 @@ const htmlTemplate = `<!doctype html>
     h2{margin-top:24px;border-bottom:1px solid #e5e7eb;padding-bottom:4px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
   .card{border:1px solid #e5e7eb;padding:12px;background:#fff}
+  /* Improve card readability */
+  .card > strong{display:block;margin-bottom:8px}
+  .card > div{margin:6px 0}
+  .card small{display:block;margin-top:6px}
     .warn{border-left:4px solid #f59e0b}
     .rec{border-left:4px solid #10b981}
     .info{border-left:4px solid #3b82f6}
@@ -231,10 +235,13 @@ const htmlTemplate = `<!doctype html>
   .toggle-rows{background:#fff;border:1px solid #d1d5db;padding:6px 10px;cursor:pointer}
     .toggle-rows:hover{background:#f9fafb}
   pre{white-space:pre-wrap;max-height:8em;overflow:auto;margin:0;background:#f8fafc;border:1px solid #e5e7eb;padding:8px}
+  pre.query.expanded{max-height:none}
+  .plan-pre.expanded{max-height:none}
   .query-short{display:block;max-height:4em;overflow:hidden}
   .query-full{display:none}
   .show-full{background:#fff;border:1px solid #d1d5db;padding:2px 6px;margin-top:6px;cursor:pointer}
   .nowrap{white-space:nowrap}
+  .badge-attn{display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;padding:2px 6px;font-size:12px;border-radius:4px}
   /* Plan advice styling */
   .plan-advice{margin-top:8px;padding:8px;border:1px solid #e5e7eb;background:#f9fafb}
   .plan-advice h4{margin:0 0 6px;font-size:14px}
@@ -413,10 +420,10 @@ const htmlTemplate = `<!doctype html>
   <h2>Top queries by total time</h2>
   <div class="table-wrap collapsed">
   <table>
-    <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Query</th></tr></thead>
+  <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByTotalTime}}
-  {{range $i, $q := .Res.Statements.TopByTotalTime}}<tr class="{{if lt $i 3}}hot{{end}}"><td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>
+  {{range $i, $q := .Res.Statements.TopByTotalTime}}<tr class="{{if lt $i 3}}hot{{end}}"><td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
         <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
         <button class="show-full">Show full</button>
         {{if $q.Advice}}
@@ -451,10 +458,10 @@ const htmlTemplate = `<!doctype html>
   <h2>Top queries by calls</h2>
   <div class="table-wrap collapsed">
   <table>
-    <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Query</th></tr></thead>
+  <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByCalls}}
-  {{range $i, $q := .Res.Statements.TopByCalls}}<tr class="{{if lt $i 3}}hot{{end}}"><td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>
+  {{range $i, $q := .Res.Statements.TopByCalls}}<tr class="{{if lt $i 3}}hot{{end}}"><td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
         <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
         <button class="show-full">Show full</button>
       </td></tr>{{end}}
@@ -510,32 +517,48 @@ const htmlTemplate = `<!doctype html>
 
   <script>
   (function(){
-    document.addEventListener('click', function(e){
-      if(e.target && e.target.classList.contains('toggle-rows')){
-        var wrap = e.target.closest('.table-wrap');
+  document.addEventListener('click', function(e){
+      var btn;
+      // Toggle rows (Show all / Show less)
+      btn = e.target && e.target.closest && e.target.closest('.toggle-rows');
+      if(btn){
+    e.preventDefault();
+        var wrap = btn.closest('.table-wrap');
         if(!wrap) return;
         wrap.classList.toggle('collapsed');
-        e.target.textContent = wrap.classList.contains('collapsed') ? 'Show all' : 'Show less';
+        btn.textContent = wrap.classList.contains('collapsed') ? 'Show all' : 'Show less';
+        return;
       }
-      if(e.target && e.target.classList.contains('show-full')){
-        var td = e.target.closest('td');
+      // Toggle query text (Show full / Show less)
+      btn = e.target && e.target.closest && e.target.closest('.show-full');
+      if(btn){
+    e.preventDefault();
+        var td = btn.closest('td');
         if(!td) return;
         var shortEl = td.querySelector('.query-short');
         var fullEl = td.querySelector('.query-full');
+    var pre = td.querySelector('pre.query');
         if(!shortEl || !fullEl) return;
         var expanded = fullEl.style.display === 'block';
         fullEl.style.display = expanded ? 'none' : 'block';
         shortEl.style.display = expanded ? 'block' : 'none';
-        e.target.textContent = expanded ? 'Show full' : 'Show less';
+    if(pre){ pre.classList.toggle('expanded', !expanded); }
+    btn.textContent = expanded ? 'Show full' : 'Show less';
+        return;
       }
-      if(e.target && e.target.classList.contains('show-plan')){
-        var card = e.target.closest('.plan-advice');
+      // Toggle plan visibility (Show plan / Hide plan)
+      btn = e.target && e.target.closest && e.target.closest('.show-plan');
+      if(btn){
+    e.preventDefault();
+        var card = btn.closest('.plan-advice');
         if(!card) return;
         var pre = card.querySelector('.plan-pre');
         if(!pre) return;
         var expanded = pre.style.display === 'block';
-        pre.style.display = expanded ? 'none' : 'block';
-        e.target.textContent = expanded ? 'Show plan' : 'Hide plan';
+    pre.style.display = expanded ? 'none' : 'block';
+    pre.classList.toggle('expanded', !expanded);
+    btn.textContent = expanded ? 'Show plan' : 'Hide plan';
+        return;
       }
     });
   })();

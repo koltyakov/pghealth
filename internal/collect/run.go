@@ -132,6 +132,7 @@ type Statement struct {
 	TempBlksRead    float64
 	TempBlksWrite   float64
 	Advice          *PlanAdvice
+	NeedsAttention  bool
 }
 
 // PlanAdvice contains collected EXPLAIN plan text, highlights and human suggestions
@@ -465,8 +466,9 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			if hasJoin {
 				advice.Suggestions = append(advice.Suggestions, "Ensure join keys are indexed on both sides (or use suitable composite indexes).")
 			}
-			if advice.Plan != "" || len(advice.Suggestions) > 0 {
+			if advice.Plan != "" || len(advice.Suggestions) > 0 || len(advice.Highlights) > 0 {
 				res.Statements.TopByTotalTime[i].Advice = advice
+				res.Statements.TopByTotalTime[i].NeedsAttention = true
 			}
 		}
 	}
