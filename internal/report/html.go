@@ -35,60 +35,13 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	})
 	sort.Slice(res.IndexUnused, func(i, j int) bool { return res.IndexUnused[i].SizeBytes > res.IndexUnused[j].SizeBytes })
 	sort.Slice(res.Indexes, func(i, j int) bool { return res.Indexes[i].SizeBytes > res.Indexes[j].SizeBytes })
-	// Sort tables with index counts by impact using a severity score:
-	// Priority signals: large zero-index tables, high-bloat large tables, very large tables, and over-indexed big tables.
-	// Score components (additive):
-	// - Zero index boost (bigger for larger row counts)
-	// - Bloat boost scaled by row count
-	// - Size boost (log scale)
-	// - Many indexes boost for >10 indexes
-	// - Dead rows boost (log scale)
-	score := func(t collect.TableIndexCount) float64 {
-		// safe logs
-		log10 := func(x float64) float64 {
-			if x <= 0 {
-				return 0
-			}
-			return math.Log10(x)
-		}
-		log2 := func(x float64) float64 {
-			if x <= 0 {
-				return 0
-			}
-			return math.Log2(x)
-		}
-		s := 0.0
-		// Zero indexes on large tables are critical
-		if t.IndexCount == 0 {
-			s += 100.0 + math.Min(60.0, log10(float64(t.RowCount)+1)*10.0)
-		}
-		// Bloat severity grows with both percent and table size (rows)
-		s += math.Min(50.0, t.BloatPct) * (1.0 + log10(float64(t.RowCount)+1))
-		// Absolute dead rows add weight
-		s += log10(float64(t.DeadRows)+1.0) * 2.0
-		// Size in bytes (log scale)
-		s += log2(float64(t.SizeBytes) + 1.0)
-		// Over-indexing: mild boost for >10 indexes
-		if t.IndexCount > 10 {
-			s += math.Min(30.0, float64(t.IndexCount-10)*2.0)
-		}
-		return s
-	}
+	// Sort "Tables with index counts" by estimated bloat bytes (Size * Bloat%) desc, then by overall size desc
 	sort.Slice(res.TablesWithIndexCount, func(i, j int) bool {
 		a, b := res.TablesWithIndexCount[i], res.TablesWithIndexCount[j]
-		sa, sb := score(a), score(b)
-		if sa != sb {
-			return sa > sb
-		}
-		// Stable, meaningful tie-breakers
-		if a.IndexCount == 0 && b.IndexCount != 0 { // prefer zero-index ties first
-			return true
-		}
-		if a.IndexCount != 0 && b.IndexCount == 0 {
-			return false
-		}
-		if a.BloatPct != b.BloatPct {
-			return a.BloatPct > b.BloatPct
+		wa := int64(math.Round(float64(a.SizeBytes) * a.BloatPct / 100.0))
+		wb := int64(math.Round(float64(b.SizeBytes) * b.BloatPct / 100.0))
+		if wa != wb {
+			return wa > wb
 		}
 		if a.SizeBytes != b.SizeBytes {
 			return a.SizeBytes > b.SizeBytes
@@ -115,6 +68,33 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	copy(tablesByRows, res.Tables)
 	sort.Slice(tablesByRows, func(i, j int) bool { return tablesByRows[i].NLiveTup > tablesByRows[j].NLiveTup })
 
+	// Aggregate estimated reclaimable space (via VACUUM) per database using table bloat heuristic
+	reclaimByDB := map[string]int64{}
+	reclaimTotal := int64(0)
+	for _, t := range res.TablesWithIndexCount {
+		db := strings.TrimSpace(t.Database)
+		if db == "" {
+			db = strings.TrimSpace(res.ConnInfo.CurrentDB)
+		}
+		est := int64(math.Round(float64(t.SizeBytes) * t.BloatPct / 100.0))
+		if est > 0 {
+			reclaimByDB[db] += est
+			reclaimTotal += est
+		}
+	}
+	// materialize and sort by bytes desc
+	reclaimList := make([]struct {
+		Database string
+		Bytes    int64
+	}, 0, len(reclaimByDB))
+	for k, v := range reclaimByDB {
+		reclaimList = append(reclaimList, struct {
+			Database string
+			Bytes    int64
+		}{Database: k, Bytes: v})
+	}
+	sort.Slice(reclaimList, func(i, j int) bool { return reclaimList[i].Bytes > reclaimList[j].Bytes })
+
 	// Precompute whether any client has a hostname to show
 	showHostname := false
 	for _, c := range res.ConnectionsByClient {
@@ -124,30 +104,37 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		}
 	}
 
-	// Derive large unused indexes subset (>100MB) from both sources and dedupe
-	largeUnusedMap := make(map[string]collect.IndexUnused)
+	// Build a combined set of unused indexes from both sources (candidates + bloat view), deduped
+	combined := make(map[string]collect.IndexUnused)
 	for _, iu := range res.IndexUnused {
-		if iu.SizeBytes > 100*1024*1024 { // >100MB
-			dbPart := strings.TrimSpace(iu.Database)
-			key := dbPart + "|" + iu.Schema + "." + iu.Name
-			largeUnusedMap[key] = iu
+		dbPart := strings.TrimSpace(iu.Database)
+		if dbPart == "" {
+			dbPart = strings.TrimSpace(res.ConnInfo.CurrentDB)
+		}
+		key := dbPart + "|" + iu.Schema + "." + iu.Name
+		// keep the larger size if duplicate appears
+		if prev, ok := combined[key]; !ok || iu.SizeBytes > prev.SizeBytes {
+			combined[key] = iu
 		}
 	}
-	// Also consider index bloat stats where scans=0 and size >100MB
-	for _, ib := range res.IndexBloatStats {
-		if ib.Scans == 0 && ib.WastedBytes > 100*1024*1024 {
-			dbPart := strings.TrimSpace(res.ConnInfo.CurrentDB)
-			key := dbPart + "|" + ib.Schema + "." + ib.Name
-			if _, ok := largeUnusedMap[key]; !ok {
-				largeUnusedMap[key] = collect.IndexUnused{Database: res.ConnInfo.CurrentDB, Schema: ib.Schema, Table: ib.Table, Name: ib.Name, SizeBytes: ib.WastedBytes}
+	for _, ib := range res.IndexBloatStats { // include zero-scan indexes seen as bloated
+		if ib.Scans == 0 {
+			db := strings.TrimSpace(res.ConnInfo.CurrentDB)
+			key := db + "|" + ib.Schema + "." + ib.Name
+			if prev, ok := combined[key]; !ok || ib.WastedBytes > prev.SizeBytes {
+				combined[key] = collect.IndexUnused{Database: res.ConnInfo.CurrentDB, Schema: ib.Schema, Table: ib.Table, Name: ib.Name, SizeBytes: ib.WastedBytes}
 			}
 		}
 	}
-	largeUnused := make([]collect.IndexUnused, 0, len(largeUnusedMap))
-	for _, v := range largeUnusedMap {
-		largeUnused = append(largeUnused, v)
+	// materialize and sort by size desc
+	if len(combined) > 0 {
+		merged := make([]collect.IndexUnused, 0, len(combined))
+		for _, v := range combined {
+			merged = append(merged, v)
+		}
+		sort.Slice(merged, func(i, j int) bool { return merged[i].SizeBytes > merged[j].SizeBytes })
+		res.IndexUnused = merged
 	}
-	sort.Slice(largeUnused, func(i, j int) bool { return largeUnused[i].SizeBytes > largeUnused[j].SizeBytes })
 
 	// Whether to show Database column in various sections
 	showDBTablesByRows := false
@@ -168,13 +155,6 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	for _, iu := range res.IndexUnused {
 		if strings.TrimSpace(iu.Database) != "" {
 			showDBIndexUnused = true
-			break
-		}
-	}
-	showDBLargeUnused := false
-	for _, iu := range largeUnused {
-		if strings.TrimSpace(iu.Database) != "" {
-			showDBLargeUnused = true
 			break
 		}
 	}
@@ -258,20 +238,20 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		if total == 0 {
 			return "Healthy: no unused indexes detected."
 		}
+		// count large ones (>100MB)
+		large := 0
+		for _, iu := range res.IndexUnused {
+			if iu.SizeBytes > 100*1024*1024 {
+				large++
+			}
+		}
+		if large > 0 {
+			return fmt.Sprintf("%d unused indexes (%d > 100MB). Validate with workload owners before dropping.", total, large)
+		}
 		if total == 1 {
-			return "1 unused index candidate detected; validate and consider dropping."
+			return "1 unused index detected; validate and consider dropping."
 		}
-		return fmt.Sprintf("%d unused index candidates detected; validate with workload owners before dropping.", total)
-	}()
-	largeUnusedSummary := func() string {
-		large := len(largeUnused)
-		if large == 0 {
-			return ""
-		}
-		if large == 1 {
-			return "1 large unused index detected; validate and consider dropping."
-		}
-		return fmt.Sprintf("%d large unused indexes detected; validate with workload owners before dropping.", large)
+		return fmt.Sprintf("%d unused indexes detected; validate with workload owners before dropping.", total)
 	}()
 	indexUsageSummary := func() string {
 		if len(res.IndexUsageLow) == 0 {
@@ -329,8 +309,8 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		return fmt.Sprintf("Autovacuum workers: %d active. Ensure cost settings aren’t throttling large tables.", len(res.AutoVacuum))
 	}()
 
-	// Brief explanation for Bloat % in "Tables with index counts"
-	bloatPctNote := "Bloat % is a heuristic: dead tuples share = n_dead_tup / (n_live_tup + n_dead_tup). Rows over ~20% are highlighted. Use VACUUM to reclaim space; for severe bloat (>50%), consider VACUUM FULL or pg_repack and tune autovacuum (scale_factor, naptime, cost limits)."
+	// Brief explanation for Bloat in "Tables with index counts"
+	bloatPctNote := "Bloat is estimated from dead tuple share: Bloat % ≈ n_dead_tup / (n_live_tup + n_dead_tup). 'Bloat (est.)' shows wasted bytes = table size × Bloat %. Rows over ~20% are highlighted. Use VACUUM to reclaim space; for severe bloat (>50%), consider VACUUM FULL or pg_repack and tune autovacuum (scale_factor, naptime, cost limits)."
 
 	funcMap := template.FuncMap{
 		"since":    func(t time.Time) string { return time.Since(t).String() },
@@ -377,6 +357,13 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		"fmtF1":        func(f float64) string { return fmtFloatPrecSep(f, 1) },
 		"fmtF2":        func(f float64) string { return fmtFloatPrecSep(f, 2) },
 		"fmtThousands": func(n int64) string { return addThousands(strconv.FormatInt(n, 10)) },
+		// bloatBytes estimates wasted bytes from size and percent
+		"bloatBytes": func(size int64, pct float64) int64 {
+			if size <= 0 || pct <= 0 {
+				return 0
+			}
+			return int64(math.Round(float64(size) * pct / 100.0))
+		},
 	}
 
 	// Parse embedded report template
@@ -392,28 +379,31 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		Activity            []collect.Activity
 		TablesByRows        []collect.TableStat
 		TablesBySize        []collect.TableStat
-		LargeUnused         []collect.IndexUnused
 		ShowDBTablesByRows  bool
 		ShowDBTablesBySize  bool
 		ShowDBIndexUnused   bool
-		ShowDBLargeUnused   bool
 		ShowDBIndexUsageLow bool
 		ShowDBIndexCounts   bool
+		ReclaimByDB         []struct {
+			Database string
+			Bytes    int64
+		}
+		ReclaimTotal int64
 		// summaries
 		ConnSummary        string
 		DBsSummary         string
 		CacheHitsSummary   string
 		IndexUnusedSummary string
-		LargeUnusedSummary string
 		IndexUsageSummary  string
 		ClientsSummary     string
 		BlockingSummary    string
 		LongRunningSummary string
 		AutovacSummary     string
 		BloatPctNote       string
-	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize, LargeUnused: largeUnused,
-		ShowDBTablesByRows: showDBTablesByRows, ShowDBTablesBySize: showDBTablesBySize, ShowDBIndexUnused: showDBIndexUnused, ShowDBLargeUnused: showDBLargeUnused, ShowDBIndexUsageLow: showDBIndexUsageLow, ShowDBIndexCounts: showDBIndexCounts,
-		ConnSummary: connSummary, DBsSummary: dbsSummary, CacheHitsSummary: cacheHitsSummary, IndexUnusedSummary: indexUnusedSummary, LargeUnusedSummary: largeUnusedSummary,
+	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize,
+		ShowDBTablesByRows: showDBTablesByRows, ShowDBTablesBySize: showDBTablesBySize, ShowDBIndexUnused: showDBIndexUnused, ShowDBIndexUsageLow: showDBIndexUsageLow, ShowDBIndexCounts: showDBIndexCounts,
+		ReclaimByDB: reclaimList, ReclaimTotal: reclaimTotal,
+		ConnSummary: connSummary, DBsSummary: dbsSummary, CacheHitsSummary: cacheHitsSummary, IndexUnusedSummary: indexUnusedSummary,
 		IndexUsageSummary: indexUsageSummary, ClientsSummary: clientsSummary, BlockingSummary: blockingSummary, LongRunningSummary: longRunningSummary, AutovacSummary: autovacSummary,
 		BloatPctNote: bloatPctNote}
 	return tmpl.Execute(f, data)

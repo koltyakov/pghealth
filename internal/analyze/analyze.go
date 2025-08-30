@@ -246,26 +246,64 @@ func Run(res collect.Result) Analysis {
 		})
 	}
 
-	// Unused indexes
-	if len(res.IndexUnused) > 0 {
-		names := ""
-		max := 10
-		for i, ix := range res.IndexUnused {
-			if i >= max {
-				break
+	// Unused indexes (consolidated): combine candidates from idx_scan=0 and from index bloat stats with scans=0
+	if len(res.IndexUnused) > 0 || len(res.IndexBloatStats) > 0 {
+		type key struct{ db, schema, name string }
+		combined := map[key]collect.IndexUnused{}
+		for _, iu := range res.IndexUnused {
+			db := strings.TrimSpace(iu.Database)
+			if db == "" {
+				db = strings.TrimSpace(res.ConnInfo.CurrentDB)
 			}
-			if i > 0 {
-				names += ", "
+			k := key{db, iu.Schema, iu.Name}
+			if prev, ok := combined[k]; !ok || iu.SizeBytes > prev.SizeBytes {
+				combined[k] = iu
 			}
-			names += fmt.Sprintf("%s.%s", ix.Schema, ix.Name)
 		}
-		a.Recommendations = append(a.Recommendations, Finding{
-			Title:       "Unused large indexes",
-			Severity:    "rec",
-			Code:        "unused-large-indexes",
-			Description: fmt.Sprintf("%d indexes show zero scans; first examples: %s", len(res.IndexUnused), names),
-			Action:      "Validate with workload owners and drop truly unused indexes to reduce write/maintenance overhead.",
-		})
+		for _, ib := range res.IndexBloatStats {
+			if ib.Scans == 0 {
+				k := key{strings.TrimSpace(res.ConnInfo.CurrentDB), ib.Schema, ib.Name}
+				if prev, ok := combined[k]; !ok || ib.WastedBytes > prev.SizeBytes {
+					combined[k] = collect.IndexUnused{Database: res.ConnInfo.CurrentDB, Schema: ib.Schema, Table: ib.Table, Name: ib.Name, SizeBytes: ib.WastedBytes}
+				}
+			}
+		}
+		if len(combined) > 0 {
+			// materialize for sampling and count large ones
+			list := make([]collect.IndexUnused, 0, len(combined))
+			for _, v := range combined {
+				list = append(list, v)
+			}
+			sort.Slice(list, func(i, j int) bool { return list[i].SizeBytes > list[j].SizeBytes })
+			names := ""
+			max := 10
+			for i, ix := range list {
+				if i >= max {
+					break
+				}
+				if i > 0 {
+					names += ", "
+				}
+				names += fmt.Sprintf("%s.%s", ix.Schema, ix.Name)
+			}
+			large := 0
+			for _, ix := range list {
+				if ix.SizeBytes > 100*1024*1024 {
+					large++
+				}
+			}
+			desc := fmt.Sprintf("%d unused index candidates; examples: %s", len(list), names)
+			if large > 0 {
+				desc += fmt.Sprintf(" (%d >100MB)", large)
+			}
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Unused indexes",
+				Severity:    "rec",
+				Code:        "unused-indexes",
+				Description: desc,
+				Action:      "Validate with workload owners and drop truly unused indexes to reduce write/maintenance overhead.",
+			})
+		}
 	}
 
 	// Missing index hints
@@ -468,24 +506,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// Index bloat analysis
-	if len(res.IndexBloatStats) > 0 {
-		largeUnusedIndexes := 0
-		for _, ib := range res.IndexBloatStats {
-			if ib.Scans == 0 && ib.WastedBytes > 100*1024*1024 { // >100MB
-				largeUnusedIndexes++
-			}
-		}
-		if largeUnusedIndexes > 0 {
-			a.Recommendations = append(a.Recommendations, Finding{
-				Title:       "Large unused indexes",
-				Severity:    "rec",
-				Code:        "large-unused-indexes",
-				Description: fmt.Sprintf("%d indexes >100MB with zero scans", largeUnusedIndexes),
-				Action:      "Consider dropping large unused indexes; monitor impact before removal.",
-			})
-		}
-	}
+	// Index bloat analysis (keep other bloat insights here in future; large unused covered above)
 
 	// Replication health
 	if len(res.ReplicationStats) > 0 {

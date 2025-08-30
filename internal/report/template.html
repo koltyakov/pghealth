@@ -475,7 +475,7 @@
   {{/* No explicit summary for this table to avoid noise */}}
 
   {{if .Res.IndexUnused}}
-  <h2>Indexes (unused candidates)</h2>
+  <h2>Unused indexes</h2>
   <div id="table-index-unused" class="table-wrap{{if gt (len .Res.IndexUnused) 10}} collapsed{{end}}">
     <table>
       <thead>
@@ -493,7 +493,7 @@
           <td>{{.Schema}}</td>
           <td>{{.Table}}</td>
           <td>{{.Name}}</td>
-          <td>{{fmtBytes .SizeBytes}}</td>
+          <td>{{fmtBytes .SizeBytes}} {{if gt .SizeBytes 104857600}}<span class="badge-attn">Large</span>{{end}}</td>
         </tr>{{end}}
       </tbody>
     </table>
@@ -535,36 +535,7 @@
   </div>
   {{if .IndexUsageSummary}}<p class="section-note">{{.IndexUsageSummary}}</p>{{end}}
 
-  {{if .LargeUnused}}
-  <h2>Large unused indexes (> 100 MB)</h2>
-  <div id="table-index-large-unused" class="table-wrap collapsed">
-    <table>
-      <thead>
-        <tr>
-          {{if .ShowDBLargeUnused}}<th>Database</th>{{end}}
-          <th>Schema</th>
-          <th>Table</th>
-          <th>Index</th>
-          <th>Size</th>
-        </tr>
-      </thead>
-      <tbody>
-  {{range .LargeUnused}}
-        <tr>
-          {{if $.ShowDBLargeUnused}}<td>{{.Database}}</td>{{end}}
-          <td>{{.Schema}}</td>
-          <td>{{.Table}}</td>
-          <td>{{.Name}}</td>
-          <td>{{fmtBytes .SizeBytes}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  {{if gt (len .LargeUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-index-large-unused">Show all</button></div>{{end}}
-  </div>
-  {{if .LargeUnusedSummary}}<p class="section-note">{{.LargeUnusedSummary}}</p>{{end}}
-  {{end}}
+  
 
   
   <h2>Tables with index counts</h2>
@@ -579,7 +550,7 @@
           <th>Size</th>
           <th>Rows</th>
           <th>Dead rows</th>
-          <th>Bloat %</th>
+          <th>Bloat</th>
         </tr>
       </thead>
       <tbody>
@@ -593,7 +564,7 @@
           <td>{{fmtBytes .SizeBytes}}</td>
           <td>{{fmtThousands .RowCount}}</td>
           <td>{{fmtThousands .DeadRows}}</td>
-          <td>{{printf "%.1f" .BloatPct}}%</td>
+          <td>{{fmtBytes (bloatBytes .SizeBytes .BloatPct)}} ({{printf "%.1f" .BloatPct}}%)</td>
           </tr>
           {{end}}
           {{else}}
@@ -607,6 +578,34 @@
     data-target="#table-index-counts">Show all</button></div>{{end}}
   </div>
   {{if .BloatPctNote}}<p class="section-note">{{.BloatPctNote}}</p>{{end}}
+
+  {{if .ReclaimByDB}}
+  <h3>Reclaimable space by database (estimate)</h3>
+  <div id="table-reclaim-by-db" class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Database</th>
+          <th>Reclaimable (est.)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .ReclaimByDB}}
+        <tr>
+          <td>{{.Database}}</td>
+          <td>{{fmtBytes .Bytes}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+      <tfoot>
+        <tr>
+          <th>Total</th>
+          <th>{{fmtBytes .ReclaimTotal}}</th>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {{end}}
 
   {{if .Res.Extensions.PgStatStatements}}
   {{if .Res.Statements.SkippedReason}}
