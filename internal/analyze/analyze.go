@@ -31,7 +31,7 @@ func Run(res collect.Result) Analysis {
 		a.Infos = append(a.Infos, Finding{
 			Title:       "Server uptime",
 			Severity:    "info",
-			Description: fmt.Sprintf("%s (since %s)", up.Truncate(time.Second), res.ConnInfo.StartTime.Format(time.RFC3339)),
+			Description: fmt.Sprintf("%s (since %s)", humanizeDuration(up), formatLocalTime(res.ConnInfo.StartTime)),
 			Action:      "",
 		})
 	}
@@ -275,14 +275,14 @@ func Run(res collect.Result) Analysis {
 			a.Infos = append(a.Infos, Finding{
 				Title:       "Query stats window",
 				Severity:    "info",
-				Description: fmt.Sprintf("pg_stat_statements data covers the last %s (since %s)", statsAge.Truncate(time.Second), res.Statements.StatsResetTime.Format(time.RFC3339)),
+				Description: fmt.Sprintf("pg_stat_statements data covers the last %s (since %s)", humanizeDuration(statsAge), formatLocalTime(res.Statements.StatsResetTime)),
 				Action:      "Run `SELECT pg_stat_statements_reset()` to clear stats if needed.",
 			})
 		}
 
 		if len(res.Statements.TopByTotalTime) > 0 {
 			q := res.Statements.TopByTotalTime[0]
-			desc := fmt.Sprintf("Calls: %.0f, TotalTime: %.2f ms", q.Calls, q.TotalTime)
+			desc := fmt.Sprintf("Calls: %s, Total: %s", formatThousands0(q.Calls), humanizeMs(q.TotalTime))
 			if !res.Statements.StatsResetTime.IsZero() {
 				statsAgeHours := time.Since(res.Statements.StatsResetTime).Hours()
 				if statsAgeHours > 0 {
@@ -744,3 +744,89 @@ func parseWithUnit(val string, unit string) (int64, bool) {
 	}
 }
 func bytesToGB(b int64) float64 { return float64(b) / (1024 * 1024 * 1024) }
+
+// humanizeDuration renders a duration like "4d 1h 25m" or "1h 25m 42s"
+func humanizeDuration(d time.Duration) string {
+	if d < 0 {
+		d = -d
+	}
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return d.String()
+	}
+	total := int64(d.Seconds())
+	days := total / 86400
+	total %= 86400
+	hours := total / 3600
+	total %= 3600
+	mins := total / 60
+	secs := total % 60
+	parts := make([]string, 0, 4)
+	if days > 0 {
+		parts = append(parts, fmt.Sprintf("%dd", days))
+	}
+	if hours > 0 {
+		parts = append(parts, fmt.Sprintf("%dh", hours))
+	}
+	if mins > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", mins))
+	}
+	if secs > 0 {
+		if len(parts) < 3 {
+			parts = append(parts, fmt.Sprintf("%ds", secs))
+		}
+	}
+	if len(parts) == 0 {
+		return "0s"
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatLocalTime(t time.Time) string {
+	if t.IsZero() {
+		return "n/a"
+	}
+	return t.Local().Format("2006-01-02 15:04:05 MST")
+}
+
+func formatThousands0(f float64) string {
+	s := strconv.FormatFloat(f, 'f', 0, 64)
+	// add thousands separators
+	neg := false
+	if len(s) > 0 && s[0] == '-' {
+		neg = true
+		s = s[1:]
+	}
+	n := len(s)
+	if n <= 3 {
+		if neg {
+			return "-" + s
+		}
+		return s
+	}
+	out := make([]byte, 0, n+n/3)
+	cnt := 0
+	for i := n - 1; i >= 0; i-- {
+		out = append(out, s[i])
+		cnt++
+		if cnt%3 == 0 && i != 0 {
+			out = append(out, ',')
+		}
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	if neg {
+		return "-" + string(out)
+	}
+	return string(out)
+}
+
+// humanizeMs converts milliseconds to a compact human duration string like "6h 27m" or "42s"
+func humanizeMs(ms float64) string {
+	if ms <= 0 {
+		return "0s"
+	}
+	d := time.Duration(ms * float64(time.Millisecond))
+	return humanizeDuration(d)
+}

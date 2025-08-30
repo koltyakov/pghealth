@@ -69,7 +69,7 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 			if pct >= 80 {
 				return fmt.Sprintf("Attention: %s/%s (%.0f%%) connections in use. Consider a pooler and tuning max_connections.", addThousands(strconv.Itoa(res.TotalConnections)), addThousands(strconv.Itoa(res.ConnInfo.MaxConnections)), pct)
 			}
-			return fmt.Sprintf("OK: %s/%s (%.0f%%) connections in use.", addThousands(strconv.Itoa(res.TotalConnections)), addThousands(strconv.Itoa(res.ConnInfo.MaxConnections)), pct)
+			return fmt.Sprintf("Healthy: %s/%s (%.0f%%) connections in use.", addThousands(strconv.Itoa(res.TotalConnections)), addThousands(strconv.Itoa(res.ConnInfo.MaxConnections)), pct)
 		}
 		return ""
 	}()
@@ -105,14 +105,14 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 			return ""
 		}
 		if below == 0 {
-			return fmt.Sprintf("OK: cache hit healthy across databases (lowest %.2f%%).", min)
+			return fmt.Sprintf("Healthy: cache hit ratio looks good across databases (lowest %.2f%%).", min)
 		}
 		return fmt.Sprintf("Attention: %d database(s) below 95%% cache hit (lowest %.2f%%). Consider memory/indexing improvements.", below, min)
 	}()
 	indexUnusedSummary := func() string {
 		n := len(res.IndexUnused)
 		if n == 0 {
-			return "OK: no large unused indexes detected."
+			return "Healthy: no large unused indexes detected."
 		}
 		if n == 1 {
 			return "1 unused index candidate detected; validate and consider dropping."
@@ -137,7 +137,7 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 			}
 		}
 		if below80 == 0 {
-			return "OK: index usage looks healthy for sampled tables."
+			return "Healthy: index usage looks healthy for sampled tables."
 		}
 		return fmt.Sprintf("Attention: %d table(s) with index usage < 80%% (min %.2f%%). Review predicates and add indexes.", below80, min)
 	}()
@@ -158,19 +158,19 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	}()
 	blockingSummary := func() string {
 		if len(res.Blocking) == 0 {
-			return "OK: no blocking detected."
+			return "Healthy: no blocking detected."
 		}
 		return fmt.Sprintf("Attention: %d blocking relationship(s); longest blocked for %s.", len(res.Blocking), res.Blocking[0].BlockedDuration)
 	}()
 	longRunningSummary := func() string {
 		if len(res.LongRunning) == 0 {
-			return "OK: no active queries > 5 minutes."
+			return "Healthy: no active queries > 5 minutes."
 		}
 		return fmt.Sprintf("Attention: %d long-running query(ies); longest %s.", len(res.LongRunning), res.LongRunning[0].Duration)
 	}()
 	autovacSummary := func() string {
 		if len(res.AutoVacuum) == 0 {
-			return "OK: no autovacuum workers active now."
+			return "Healthy: no autovacuum workers active now."
 		}
 		return fmt.Sprintf("Autovacuum workers: %d active. Ensure cost settings aren’t throttling large tables.", len(res.AutoVacuum))
 	}()
@@ -216,6 +216,7 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		"fmtInt":       func(n int) string { return addThousands(strconv.FormatInt(int64(n), 10)) },
 		"fmtI64":       func(n int64) string { return addThousands(strconv.FormatInt(n, 10)) },
 		"fmtF0":        func(f float64) string { return fmtFloatPrecSep(f, 0) },
+		"fmtF1":        func(f float64) string { return fmtFloatPrecSep(f, 1) },
 		"fmtF2":        func(f float64) string { return fmtFloatPrecSep(f, 2) },
 		"fmtThousands": func(n int64) string { return addThousands(strconv.FormatInt(n, 10)) },
 	}).Parse(htmlTemplate))
@@ -299,11 +300,16 @@ func addThousands(s string) string {
 	return string(out)
 }
 
-// humanizeDuration renders a duration like "2d 3h 4m" or "5m 12s" depending on magnitude
+// humanizeDuration renders a duration like "4d 1h 25m" or "1h 25m 42s"
 func humanizeDuration(d time.Duration) string {
 	if d < 0 {
 		d = -d
 	}
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return d.String()
+	}
+
 	total := int64(d.Seconds())
 	days := total / 86400
 	total %= 86400
@@ -311,7 +317,8 @@ func humanizeDuration(d time.Duration) string {
 	total %= 3600
 	mins := total / 60
 	secs := total % 60
-	parts := make([]string, 0, 3)
+
+	parts := make([]string, 0, 4)
 	if days > 0 {
 		parts = append(parts, fmt.Sprintf("%dd", days))
 	}
@@ -321,9 +328,17 @@ func humanizeDuration(d time.Duration) string {
 	if mins > 0 {
 		parts = append(parts, fmt.Sprintf("%dm", mins))
 	}
-	if len(parts) == 0 {
-		parts = append(parts, fmt.Sprintf("%ds", secs))
+	if secs > 0 {
+		// Add seconds if we have less than 3 parts (d, h, m)
+		if len(parts) < 3 {
+			parts = append(parts, fmt.Sprintf("%ds", secs))
+		}
 	}
+
+	if len(parts) == 0 {
+		return "0s"
+	}
+
 	return strings.Join(parts, " ")
 }
 
@@ -783,15 +798,15 @@ const htmlTemplate = `<!doctype html>
     <p class="section-note">{{.Res.Statements.SkippedReason}}</p>
     {{else}}
   <h2>Top queries by total time</h2>
-  {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}}.</p>{{end}}
+  {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
   <div id="table-queries-total-time" class="table-wrap collapsed">
   <table>
-  <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
+  <thead><tr><th>Calls</th><th>Calls/hr</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByTotalTime}}
   	{{range $i, $q := .Res.Statements.TopByTotalTime}}
 		<tr class="{{if lt $i 3}}hot{{end}}">
-			<td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
+			<td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
         <pre id="query-pre-total-{{$i}}" class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
   			<button type="button" class="show-full" data-target="#query-pre-total-{{$i}}">Show full</button>
         {{if $q.Advice}}
@@ -818,7 +833,7 @@ const htmlTemplate = `<!doctype html>
 		</tr>
 		{{end}}
     {{else}}
-      <tr><td colspan="4" class="muted">No data</td></tr>
+      <tr><td colspan="6" class="muted">No data</td></tr>
     {{end}}
     </tbody>
   </table>
@@ -826,21 +841,21 @@ const htmlTemplate = `<!doctype html>
 </div>
 
   <h2>Top queries by calls</h2>
-  {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}}.</p>{{end}}
+  {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
   <div id="table-queries-calls" class="table-wrap collapsed">
   <table>
-  <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
+  <thead><tr><th>Calls</th><th>Calls/hr</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByCalls}}
   	{{range $i, $q := .Res.Statements.TopByCalls}}
-			<tr class="{{if lt $i 3}}hot{{end}}">
-			<td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
+      <tr class="{{if lt $i 3}}hot{{end}}">
+      <td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
         <pre id="query-pre-calls-{{$i}}" class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
   			<button type="button" class="show-full" data-target="#query-pre-calls-{{$i}}">Show full</button>
       </td>
 			</tr>{{end}}
     {{else}}
-      <tr><td colspan="4" class="muted">No data</td></tr>
+      <tr><td colspan="6" class="muted">No data</td></tr>
     {{end}}
     </tbody>
   </table>

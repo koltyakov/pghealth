@@ -131,6 +131,7 @@ type Statements struct {
 type Statement struct {
 	Query           string
 	Calls           float64
+	CallsPerHour    float64
 	TotalTime       float64
 	MeanTime        float64
 	Rows            float64
@@ -491,6 +492,25 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				res.Statements.TopByCalls = sts
 			}
 			res.Statements.Available = len(res.Statements.TopByTotalTime) > 0 || len(res.Statements.TopByCalls) > 0
+
+			// Calculate calls per hour for all collected statements
+			if hours := res.Statements.StatsDuration.Hours(); hours > 0 {
+				for i := range res.Statements.TopByTotalTime {
+					res.Statements.TopByTotalTime[i].CallsPerHour = res.Statements.TopByTotalTime[i].Calls / hours
+				}
+				for i := range res.Statements.TopByCPU {
+					res.Statements.TopByCPU[i].CallsPerHour = res.Statements.TopByCPU[i].Calls / hours
+				}
+				for i := range res.Statements.TopByCalls {
+					res.Statements.TopByCalls[i].CallsPerHour = res.Statements.TopByCalls[i].Calls / hours
+				}
+				for i := range res.Statements.TopByIO {
+					res.Statements.TopByIO[i].CallsPerHour = res.Statements.TopByIO[i].Calls / hours
+				}
+				for i := range res.Statements.TopByIOBlocks {
+					res.Statements.TopByIOBlocks[i].CallsPerHour = res.Statements.TopByIOBlocks[i].Calls / hours
+				}
+			}
 		}
 	}
 
