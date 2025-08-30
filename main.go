@@ -58,11 +58,19 @@ func main() {
 	// Expand timestamp placeholders in output path
 	outPath = expandOutPlaceholders(outPath, start)
 
-	if err := report.WriteHTML(outPath, res, analysis, collect.Meta{StartedAt: start, Duration: time.Since(start), Version: version}); err != nil {
+	meta := collect.Meta{StartedAt: start, Duration: time.Since(start), Version: version}
+	if err := report.WriteHTML(outPath, res, analysis, meta); err != nil {
 		log.Fatalf("failed to write report: %v", err)
 	}
 
 	fmt.Printf("Report written to %s\n", outPath)
+	if cfg.Prompt {
+		if p, err := report.WritePrompt(outPath, res, meta); err == nil && p != "" {
+			fmt.Printf("LLM prompt written to %s\n", p)
+		} else if err != nil {
+			log.Printf("failed to write prompt: %v", err)
+		}
+	}
 	if cfg.Open && outPath != "-" {
 		if err := openReport(outPath); err != nil {
 			log.Printf("failed to open report: %v", err)
@@ -71,13 +79,15 @@ func main() {
 }
 
 type Flags struct {
-	URL      string
-	Output   string
-	Timeout  time.Duration
-	Open     bool
-	Stats    string
-	Suppress string
-	DBs      string
+	URL        string
+	Output     string
+	Timeout    time.Duration
+	Open       bool
+	Stats      string
+	Suppress   string
+	DBs        string
+	ExplainTop int
+	Prompt     bool
 }
 
 func (f Flags) ToCollectorConfig() collect.Config {
@@ -86,6 +96,7 @@ func (f Flags) ToCollectorConfig() collect.Config {
 		Timeout:    f.Timeout,
 		StatsSince: f.Stats,
 		DBs:        splitCSV(f.DBs),
+		ExplainTop: f.ExplainTop,
 	}
 }
 
@@ -99,9 +110,17 @@ func parseFlags() Flags {
 	flag.BoolVar(&f.Open, "open", true, "Open the report after generation")
 	flag.StringVar(&f.Stats, "stats", "", "Collect pg_stat_statements data since this duration (e.g. '24h', '7d')")
 	flag.StringVar(&f.DBs, "dbs", "", "Comma-separated database names to extend metrics from (tables/indexes sections will include a Database column)")
+	flag.IntVar(&f.ExplainTop, "explain-top", 0, "Force EXPLAIN for top N queries (by total time and calls); plans are shown on demand in the UI")
+	flag.BoolVar(&f.Prompt, "prompt", false, "Generate an LLM prompt sidecar (.prompt.txt) next to the HTML report")
 	flag.StringVar(&f.Suppress, "suppress", "", "Comma-separated recommendation codes to suppress (e.g. install-pgss,large-unused-indexes; also accepts title slugs)")
 	showVersion := flag.Bool("version", false, "Show version and exit")
 	flag.Parse()
+
+	// Smart defaults: if generating prompt and no plans requested, fetch plans for top 25
+	// We do this by adjusting ExplainTop so the collector captures plans during this run
+	if f.Prompt && f.ExplainTop == 0 {
+		f.ExplainTop = 25
+	}
 
 	if f.URL == "" {
 		// Optional positional arg as URL

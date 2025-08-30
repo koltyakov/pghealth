@@ -7,6 +7,7 @@ type Config struct {
 	Timeout    time.Duration
 	StatsSince string   `json:"stats_since" yaml:"stats_since"`
 	DBs        []string `json:"dbs" yaml:"dbs"`
+	ExplainTop int      `json:"explain_top" yaml:"explain_top"`
 }
 
 type Meta struct {

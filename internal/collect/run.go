@@ -102,6 +102,7 @@ type IndexStat struct {
 	Name      string
 	Scans     int64
 	SizeBytes int64
+	DDL       string
 }
 
 type IndexUnused struct {
@@ -453,12 +454,16 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	}
 
 	// index stats and size
-	rows, err = conn.Query(ctx, `select s.schemaname, s.relname, s.indexrelname, s.idx_scan, pg_relation_size(format('%I.%I', s.schemaname, s.indexrelname))
-        from pg_stat_all_indexes s`)
+	rows, err = conn.Query(ctx, `select s.schemaname, s.relname, s.indexrelname, s.idx_scan,
+		pg_relation_size(format('%I.%I', s.schemaname, s.indexrelname)),
+		pg_get_indexdef(ci.oid)
+		from pg_stat_all_indexes s
+		join pg_class ci on ci.relname = s.indexrelname
+		join pg_namespace n on n.oid = ci.relnamespace and n.nspname = s.schemaname`)
 	if err == nil {
 		for rows.Next() {
 			var i IndexStat
-			_ = rows.Scan(&i.Schema, &i.Table, &i.Name, &i.Scans, &i.SizeBytes)
+			_ = rows.Scan(&i.Schema, &i.Table, &i.Name, &i.Scans, &i.SizeBytes, &i.DDL)
 			i.Database = res.ConnInfo.CurrentDB
 			res.Indexes = append(res.Indexes, i)
 		}
@@ -521,11 +526,15 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				rows.Close()
 			}
 			// Collect indexes
-			if rows, err := dbConn.Query(ctx, `select s.schemaname, s.relname, s.indexrelname, s.idx_scan, pg_relation_size(format('%I.%I', s.schemaname, s.indexrelname))
-				from pg_stat_all_indexes s`); err == nil {
+			if rows, err := dbConn.Query(ctx, `select s.schemaname, s.relname, s.indexrelname, s.idx_scan,
+				pg_relation_size(format('%I.%I', s.schemaname, s.indexrelname)),
+				pg_get_indexdef(ci.oid)
+				from pg_stat_all_indexes s
+				join pg_class ci on ci.relname = s.indexrelname
+				join pg_namespace n on n.oid = ci.relnamespace and n.nspname = s.schemaname`); err == nil {
 				for rows.Next() {
 					var i IndexStat
-					_ = rows.Scan(&i.Schema, &i.Table, &i.Name, &i.Scans, &i.SizeBytes)
+					_ = rows.Scan(&i.Schema, &i.Table, &i.Name, &i.Scans, &i.SizeBytes, &i.DDL)
 					i.Database = db
 					res.Indexes = append(res.Indexes, i)
 				}
@@ -661,28 +670,31 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		}
 	}
 
-	// Best-effort EXPLAIN plan collection and analysis for heavy queries (safe subset only)
+	// Best-effort EXPLAIN plan collection for heavy queries (safe subset), unified across lists
+	remaining := cfg.ExplainTop
+	if remaining <= 0 {
+		remaining = 10
+	}
+	seen := make(map[string]bool) // dedupe across lists by exact trimmed text
 	collectAdvice := func(sts []Statement) []Statement {
-		// limit per list
-		limit := 5
-		if len(sts) < limit {
-			limit = len(sts)
+		if remaining <= 0 {
+			return sts
 		}
-		// avoid duplicate EXPLAIN for identical queries across lists
-		seen := make(map[string]bool)
-		for i := 0; i < limit; i++ {
+		for i := 0; i < len(sts) && remaining > 0; i++ {
 			// EXPLAIN in the current DB context only (statements collected from current DB)
 			q := sts[i].Query
 			qTrim := strings.TrimSpace(q)
-			if seen[qTrim] {
+			if qTrim == "" || seen[qTrim] {
 				continue
 			}
-			seen[qTrim] = true
 			qUp := strings.ToUpper(qTrim)
+			// Safe subset only: restrict to plain SELECT without parameters
 			if !strings.HasPrefix(qUp, "SELECT") {
+				seen[qTrim] = true // mark as considered to avoid retry in another list
 				continue
 			}
 			if strings.Contains(qTrim, "$1") || strings.Contains(qTrim, "$2") || strings.Contains(qTrim, "$") {
+				seen[qTrim] = true
 				continue
 			}
 			// Run EXPLAIN safely with short timeout
@@ -690,6 +702,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			planRows, err := conn.Query(ctxPlan, "EXPLAIN "+qTrim)
 			cancel()
 			if err != nil {
+				seen[qTrim] = true
 				continue
 			}
 			var planLines []string
@@ -832,7 +845,9 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			if advice.Plan != "" || len(advice.Suggestions) > 0 || len(advice.Highlights) > 0 {
 				sts[i].Advice = advice
 				sts[i].NeedsAttention = true
+				remaining--
 			}
+			seen[qTrim] = true
 		}
 		return sts
 	}

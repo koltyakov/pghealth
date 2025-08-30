@@ -18,6 +18,8 @@ Lightweight PostgreSQL health and AWR-like HTML report generator.
   - `--open` (default `true`) to open the report after generation.
   - `--suppress` to hide specific recommendation codes (comma-separated), e.g. `--suppress missing-extensions,low-cache-hit`.
   - `--dbs` to include additional databases for tables/indexes metrics (comma-separated). Example: `--dbs db1,db2`.
+  - `--explain-top` to force EXPLAIN for top N queries (by total time and by calls). Plans are collected safely (SELECT-only, no parameters) and are shown on demand in the UI.
+  - `--prompt` to generate an LLM-ready sidecar file (`.prompt.txt`) next to the HTML report.
 
 Notes on multi-DB mode:
 - When `--dbs` is provided, table and index sections aggregate and show a conditional "Database" column.
@@ -52,7 +54,16 @@ Run the tool:
 ./pghealth --url "$PGURL" --out report-{ts}.html
 ```
 
+When `--prompt` is set, a sidecar prompt file for LLMs is written next to the HTML with the same name and the suffix `.prompt.txt` (e.g., `report-2025-08-30_1200.prompt.txt`). It contains environment-specific stats (top queries with any collected plans, tables, indexes, unused indexes, and settings) plus concise instructions for obtaining concrete recommendations.
+
+To include EXPLAIN plans in the prompt, run with:
+
+```sh
+./pghealth --url "$PGURL" --out report-{ts}.html --explain-top 5
+```
+
 ## Notes
 
 - Some checks require pg_monitor or superuser; the tool attempts queries opportunistically and continues when blocked.
 - Missing-index and bloat heuristics are approximations; validate before acting.
+- EXPLAIN plans are collected without ANALYZE for safety, with a short timeout, and only for simple SELECT statements without parameters.
