@@ -332,49 +332,49 @@ const htmlTemplate = `<!doctype html>
   <meta charset="utf-8">
   <title>PostgreSQL Health Check Report</title>
   <style>
-    body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin:24px; color:#111827;}
-  header{margin-bottom:36px}
-  h1{font-size:20px;margin:0 0 12px 0}
-  header > div{margin-top:6px}
-    h2{margin-top:24px;border-bottom:1px solid #e5e7eb;padding-bottom:4px}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
-  .card{border:1px solid #e5e7eb;padding:12px;background:#fff}
-  /* Improve card readability */
-  .card > strong{display:block;margin-bottom:8px}
-  .card > div{margin:6px 0}
-  .card small{display:block;margin-top:6px}
-    .warn{border-left:4px solid #f59e0b}
-    .rec{border-left:4px solid #10b981}
-    .info{border-left:4px solid #3b82f6}
-  .table-wrap{margin:8px 0; overflow:hidden}
-  table{border-collapse:collapse;border-spacing:0;width:100%}
-  th,td{border:1px solid #9ca3af;padding:10px 12px;text-align:left;vertical-align:top}
-  thead th{background:#f3f4f6;font-weight:600;border-bottom:2px solid #9ca3af}
-  tbody tr:nth-child(even){background:#fcfcfd}
-  tbody tr:hover{background:#f8fafc}
-  code{background:#f3f4f6;padding:2px 4px}
-  .muted{color:#6b7280}
-  small{font-size:12px;color:#4b5563}
-  .table-wrap.collapsed tbody tr:nth-child(n+11){display:none}
-  .table-tools{margin:12px 0 0;display:flex;justify-content:flex-end;padding:0}
-  .hot{background:#fff7ed}
-  .toggle-rows{background:#fff;border:1px solid #d1d5db;padding:6px 10px;cursor:pointer}
-    .toggle-rows:hover{background:#f9fafb}
-  pre{white-space:pre-wrap;max-height:8em;overflow:auto;margin:0;background:#f8fafc;border:1px solid #e5e7eb;padding:8px}
-  pre.query.expanded{max-height:none}
-  .plan-pre.expanded{max-height:none}
-  .query-short{display:block;max-height:4em;overflow:hidden}
-  .query-full{display:none}
-  .show-full{background:#fff;border:1px solid #d1d5db;padding:2px 6px;margin-top:6px;cursor:pointer}
-  .nowrap{white-space:nowrap}
-  .badge-attn{display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;padding:2px 6px;font-size:12px;border-radius:4px}
-  .section-note{margin:8px 0 0;color:#4b5563}
-  /* Plan advice styling */
-  .plan-advice{margin-top:8px;padding:8px;border:1px solid #e5e7eb;background:#f9fafb}
-  .plan-advice h4{margin:0 0 6px;font-size:14px}
-  .plan-advice ul{margin:6px 0 8px 18px}
-  .show-plan{background:#fff;border:1px solid #d1d5db;padding:2px 6px;margin-top:6px;cursor:pointer}
-  .plan-pre{white-space:pre-wrap;max-height:12em;overflow:auto;margin:6px 0 0;background:#f8fafc;border:1px solid #e5e7eb;padding:8px}
+		body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin:24px; color:#111827;}
+		header{margin-bottom:36px}
+		h1{font-size:20px;margin:0 0 12px 0}
+		header > div{margin-top:6px}
+		h2{margin-top:24px;border-bottom:1px solid #e5e7eb;padding-bottom:4px}
+		.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+		.card{border:1px solid #e5e7eb;padding:12px;background:#fff}
+		/* Improve card readability */
+		.card > strong{display:block;margin-bottom:8px}
+		.card > div{margin:6px 0}
+		.card small{display:block;margin-top:6px}
+		.warn{border-left:4px solid #f59e0b}
+		.rec{border-left:4px solid #10b981}
+		.info{border-left:4px solid #3b82f6}
+		.table-wrap{margin:8px 0; overflow:hidden}
+		table{border-collapse:collapse;border-spacing:0;width:100%}
+		th,td{border:1px solid #9ca3af;padding:10px 12px;text-align:left;vertical-align:top}
+		thead th{background:#f3f4f6;font-weight:600;border-bottom:2px solid #9ca3af}
+		tbody tr:nth-child(even){background:#fcfcfd}
+		tbody tr:hover{background:#f8fafc}
+		code{background:#f3f4f6;padding:2px 4px}
+		.muted{color:#6b7280}
+		small{font-size:12px;color:#4b5563}
+		.table-wrap.collapsed tbody tr:nth-child(n+11){display:none}
+		.table-tools{margin:12px 0 0;display:flex;justify-content:flex-end;padding:0}
+		.hot{background:#fff7ed}
+		.toggle-rows{background:#fff;border:1px solid #d1d5db;padding:6px 10px;cursor:pointer}
+		.toggle-rows:hover{background:#f9fafb}
+		pre{white-space:pre-wrap;max-height:8em;overflow:auto;margin:0;background:#f8fafc;border:1px solid #e5e7eb;padding:8px}
+		pre.query.expanded{max-height:none}
+		.plan-pre.expanded{max-height:none}
+		.query-short{display:block;max-height:4em;overflow:hidden}
+		.query-full{display:none}
+		.show-full{background:#fff;border:1px solid #d1d5db;padding:2px 6px;margin-top:6px;cursor:pointer}
+		.nowrap{white-space:nowrap}
+		.badge-attn{display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;padding:2px 6px;font-size:12px;border-radius:4px}
+		.section-note{margin:8px 0 0;color:#4b5563}
+		/* Plan advice styling */
+		.plan-advice{margin-top:8px;padding:8px;border:1px solid #e5e7eb;background:#f9fafb}
+		.plan-advice h4{margin:0 0 6px;font-size:14px}
+		.plan-advice ul{margin:6px 0 8px 18px}
+		.show-plan{background:#fff;border:1px solid #d1d5db;padding:2px 6px;margin-top:6px;cursor:pointer}
+		.plan-pre{white-space:pre-wrap;max-height:12em;overflow:auto;margin:6px 0 0;background:#f8fafc;border:1px solid #e5e7eb;padding:8px}
   </style>
   </head>
 <body>
@@ -507,8 +507,6 @@ const htmlTemplate = `<!doctype html>
   </div>
   {{if .IndexUsageSummary}}<p class="section-note">{{.IndexUsageSummary}}</p>{{end}}
 
-  
-
   <h3>Cache hit ratio by database</h3>
   <p class="muted">Interpretation: closer to 100% is better. Values above ~99% are typical for OLTP workloads. Lower ratios indicate more disk reads; consider increasing shared_buffers, reviewing working set size, and improving indexing and query plans.</p>
   <div class="table-wrap collapsed">
@@ -558,9 +556,11 @@ const htmlTemplate = `<!doctype html>
   <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByTotalTime}}
-  {{range $i, $q := .Res.Statements.TopByTotalTime}}<tr class="{{if lt $i 3}}hot{{end}}"><td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
-        <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
-  <button type="button" class="show-full">Show full</button>
+  	{{range $i, $q := .Res.Statements.TopByTotalTime}}
+		<tr class="{{if lt $i 3}}hot{{end}}">
+			<td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
+        <pre class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
+  			<button type="button" class="show-full">Show full</button>
         {{if $q.Advice}}
         <div class="plan-advice">
           {{if $q.Advice.Highlights}}
@@ -581,14 +581,14 @@ const htmlTemplate = `<!doctype html>
           {{end}}
         </div>
         {{end}}
-      </td></tr>{{end}}
+      </td>
+		</tr>
+		{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
     </tbody>
   </table>{{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows">Show all</button></div>{{end}}</div>
-
-  
 
   <h2>Top queries by calls</h2>
   <div class="table-wrap collapsed">
@@ -596,10 +596,13 @@ const htmlTemplate = `<!doctype html>
   <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
     <tbody>
     {{if .Res.Statements.TopByCalls}}
-  {{range $i, $q := .Res.Statements.TopByCalls}}<tr class="{{if lt $i 3}}hot{{end}}"><td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
-        <pre class="query"><span class="query-short">{{$q.Query}}</span><span class="query-full">{{$q.Query}}</span></pre>
-  <button type="button" class="show-full">Show full</button>
-      </td></tr>{{end}}
+  	{{range $i, $q := .Res.Statements.TopByCalls}}
+			<tr class="{{if lt $i 3}}hot{{end}}">
+			<td class="nowrap">{{fmtF0 $q.Calls}}</td><td class="nowrap">{{fmtMs $q.TotalTime}}</td><td class="nowrap">{{fmtF2 $q.MeanTime}}</td><td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td><td>
+        <pre class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
+  			<button type="button" class="show-full">Show full</button>
+      </td>
+			</tr>{{end}}
     {{else}}
       <tr><td colspan="4" class="muted">No data</td></tr>
     {{end}}
@@ -655,13 +658,21 @@ const htmlTemplate = `<!doctype html>
 
   <script>
   (function(){
+    // Initialize query states on page load
+    document.addEventListener('DOMContentLoaded', function(){
+      var fullEls = document.querySelectorAll('.query-full');
+      for(var i = 0; i < fullEls.length; i++){
+        fullEls[i].style.display = 'none';
+      }
+    });
+    
     document.addEventListener('click', function(e){
       var btn;
       var el = (e.target && e.target.nodeType === 1) ? e.target : (e.target && e.target.parentElement);
       // Toggle rows (Show all / Show less)
       btn = el && el.closest && el.closest('.toggle-rows');
       if(btn){
-    e.preventDefault();
+    		e.preventDefault();
         var wrap = btn.closest('.table-wrap');
         if(!wrap) return;
         wrap.classList.toggle('collapsed');
@@ -670,33 +681,33 @@ const htmlTemplate = `<!doctype html>
       }
       // Toggle query text (Show full / Show less)
       btn = el && el.closest && el.closest('.show-full');
-      if(btn){
-    e.preventDefault();
+      if (btn) {
+    		e.preventDefault();
         var td = btn.closest('td');
         if(!td) return;
         var shortEl = td.querySelector('.query-short');
         var fullEl = td.querySelector('.query-full');
-    var pre = td.querySelector('pre.query');
+    		var pre = td.querySelector('pre.query');
         if(!shortEl || !fullEl) return;
         var expanded = fullEl.style.display === 'block';
         fullEl.style.display = expanded ? 'none' : 'block';
         shortEl.style.display = expanded ? 'block' : 'none';
-    if(pre){ pre.classList.toggle('expanded', !expanded); }
-    btn.textContent = expanded ? 'Show full' : 'Show less';
+				if(pre){ pre.classList.toggle('expanded', !expanded); }
+				btn.textContent = expanded ? 'Show full' : 'Show less';
         return;
       }
       // Toggle plan visibility (Show plan / Hide plan)
       btn = el && el.closest && el.closest('.show-plan');
-      if(btn){
-    e.preventDefault();
+      if (btn) {
+    		e.preventDefault();
         var card = btn.closest('.plan-advice');
         if(!card) return;
         var pre = card.querySelector('.plan-pre');
         if(!pre) return;
         var expanded = pre.style.display === 'block';
-    pre.style.display = expanded ? 'none' : 'block';
-    pre.classList.toggle('expanded', !expanded);
-    btn.textContent = expanded ? 'Show plan' : 'Hide plan';
+				pre.style.display = expanded ? 'none' : 'block';
+				pre.classList.toggle('expanded', !expanded);
+				btn.textContent = expanded ? 'Show plan' : 'Hide plan';
         return;
       }
     });
