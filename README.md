@@ -18,7 +18,7 @@ Lightweight PostgreSQL health and AWR-like HTML report generator.
   - `--open` (default `true`) to open the report after generation.
   - `--suppress` to hide specific recommendation codes (comma-separated), e.g. `--suppress missing-extensions,low-cache-hit`.
   - `--dbs` to include additional databases for tables/indexes metrics (comma-separated). Example: `--dbs db1,db2`.
-  - `--explain-top` to force EXPLAIN for top N queries (by total time and by calls). Plans are collected safely (SELECT-only, no parameters) and are shown on demand in the UI.
+  - Plans for top queries are collected automatically (safe: SELECT/WITH only). A soft per-list cap applies and clearly slow (>1s mean) or very frequent (≥1.5× median freq) queries are always planned.
   - `--prompt` to generate an LLM-ready sidecar file (`.prompt.txt`) next to the HTML report.
 
 Notes on multi-DB mode:
@@ -59,7 +59,7 @@ When `--prompt` is set, a sidecar prompt file for LLMs is written next to the HT
 To include EXPLAIN plans in the prompt, run with:
 
 ```sh
-./pghealth --url "$PGURL" --out report-{ts}.html --explain-top 5
+./pghealth --url "$PGURL" --out report-{ts}.html
 ```
 
 ## Notes

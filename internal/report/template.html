@@ -672,8 +672,8 @@
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-queries-total-time">Show all</button></div>{{end}}
+  {{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-queries-total-time">Show all</button></div>{{end}}
   </div>
 
   <h2>Top queries by calls</h2>
@@ -736,8 +736,8 @@
         {{end}}
       </tbody>
     </table>
-    {{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows"
-        data-target="#table-queries-calls">Show all</button></div>{{end}}
+  {{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
+    data-target="#table-queries-calls">Show all</button></div>{{end}}
   </div>
   {{end}}
   {{else}}
@@ -1011,12 +1011,12 @@
     .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
   <script>
-    // Simple, explicit handlers for maximum cross-browser reliability
     function pg_toggleRows(btn) {
       var sel = btn && btn.getAttribute('data-target');
       if (!sel) return false;
       var el = document.querySelector(sel);
       if (!el) return false;
+      var willCollapse = !el.classList.contains('collapsed');
       if (el.classList.contains('collapsed')) {
         el.classList.remove('collapsed');
         btn.textContent = 'Show less';
@@ -1024,8 +1024,19 @@
         el.classList.add('collapsed');
         btn.textContent = 'Show all';
       }
+      // If we just collapsed, scroll back to the top of the table container
+      if (willCollapse) {
+        // Prefer native scrollIntoView if available
+        if (typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+          var top = (el.getBoundingClientRect ? el.getBoundingClientRect().top : 0) + (window.pageYOffset || document.documentElement.scrollTop || 0);
+          try { window.scrollTo({ top: top, behavior: 'smooth' }); } catch (e) { window.scrollTo(0, top); }
+        }
+      }
       return false;
     }
+
     function pg_toggleFull(btn) {
       var sel = btn && btn.getAttribute('data-target');
       if (!sel) return false;
@@ -1040,6 +1051,7 @@
       }
       return false;
     }
+
     function pg_togglePlan(btn) {
       var sel = btn && btn.getAttribute('data-target');
       if (!sel) return false;

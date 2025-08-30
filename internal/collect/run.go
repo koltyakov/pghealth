@@ -307,8 +307,8 @@ type ExtensionStat struct {
 	Schema      string
 }
 
-// defaultExplainTop is the per-list fallback when --explain-top is not provided
-const defaultExplainTop = 10
+// planPerListCap is the soft cap of planned queries per list; suspect queries can exceed this cap.
+const planPerListCap = 10
 
 func Run(ctx context.Context, cfg Config) (Result, error) {
 	var res Result
@@ -674,31 +674,68 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		}
 	}
 
-	// Best-effort EXPLAIN plan collection per list (slowest and most frequent), each up to cfg.ExplainTop
+	// Best-effort EXPLAIN plan collection per list (slowest and most frequent), each up to planPerListCap
 	reParam := regexp.MustCompile(`\$\d+`)
 	collectAdvice := func(sts []Statement) []Statement {
-		limit := cfg.ExplainTop
-		if limit < 0 {
-			limit = defaultExplainTop
-		}
+		limit := planPerListCap
 		if len(sts) == 0 {
 			return sts
 		}
+		// Compute medians for frequency baselines (CallsPerHour preferred, else Calls)
+		median := func(vals []float64) float64 {
+			if len(vals) == 0 {
+				return 0
+			}
+			vv := make([]float64, 0, len(vals))
+			for _, v := range vals {
+				vv = append(vv, v)
+			}
+			// insertion sort is fine for <=20 elements
+			for i := 1; i < len(vv); i++ {
+				x := vv[i]
+				j := i - 1
+				for j >= 0 && vv[j] > x {
+					vv[j+1] = vv[j]
+					j--
+				}
+				vv[j+1] = x
+			}
+			n := len(vv)
+			if n%2 == 1 {
+				return vv[n/2]
+			}
+			return (vv[n/2-1] + vv[n/2]) / 2.0
+		}
+		var callsVals []float64
+		var cphVals []float64
+		for i := range sts {
+			if sts[i].Calls > 0 {
+				callsVals = append(callsVals, sts[i].Calls)
+			}
+			if sts[i].CallsPerHour > 0 {
+				cphVals = append(cphVals, sts[i].CallsPerHour)
+			}
+		}
+		callsMed := median(callsVals)
+		cphMed := median(cphVals)
+
 		seenLocal := make(map[string]bool)
 		taken := 0
-		extraSuspectTaken := 0
-		const extraSuspectCap = 5
+		// A query is suspect if it is slow (mean >= 1s) or high-frequency (>= 1.5x median)
 		isSuspect := func(s Statement) bool {
-			// Heuristics before plan: clearly slow or moderately slow and very frequent
-			if s.MeanTime >= 20.0 {
+			if s.MeanTime >= 1000.0 { // milliseconds
 				return true
 			}
-			if s.MeanTime >= 5.0 && s.Calls >= 1000 {
+			// prefer CallsPerHour baseline if available
+			if cphMed > 0 && s.CallsPerHour >= 1.5*cphMed {
+				return true
+			}
+			if cphMed == 0 && callsMed > 0 && s.Calls >= 1.5*callsMed {
 				return true
 			}
 			return false
 		}
-		for i := 0; i < len(sts) && (taken < limit || extraSuspectTaken < extraSuspectCap); i++ {
+		for i := 0; i < len(sts); i++ {
 			qTrim := strings.TrimSpace(sts[i].Query)
 			if qTrim == "" || seenLocal[qTrim] {
 				continue
@@ -710,8 +747,12 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				continue
 			}
 			suspect := isSuspect(sts[i])
+			// Mark as needs attention up-front if suspect, even if plan collection fails later
+			if suspect {
+				sts[i].NeedsAttention = true
+			}
+			// If over main budget and not suspect, skip planning; suspects are always planned (unlimited overage)
 			if taken >= limit && !suspect {
-				// no room in main budget and not suspect -> skip
 				continue
 			}
 			var planRows pgx.Rows
@@ -744,6 +785,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				cancel()
 			}
 			if err != nil {
+				// Plan failed; if it is suspect, keep NeedsAttention as set, but don't count against planning limit
 				continue
 			}
 			var planLines []string
@@ -888,8 +930,6 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				sts[i].NeedsAttention = true
 				if taken < limit {
 					taken++
-				} else if extraSuspectTaken < extraSuspectCap {
-					extraSuspectTaken++
 				}
 			}
 		}
