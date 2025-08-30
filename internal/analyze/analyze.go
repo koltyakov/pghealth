@@ -359,7 +359,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: Analyze tables with index counts
+	// Analyze tables with index counts
 	if len(res.TablesWithIndexCount) > 0 {
 		tablesWithoutIndexes := 0
 		tablesWithManyIndexes := 0
@@ -389,7 +389,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: Advanced bloat analysis
+	// Advanced bloat analysis
 	if len(res.TableBloatStats) > 0 {
 		severeBloat := 0
 		totalWasted := int64(0)
@@ -409,7 +409,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: Index bloat analysis
+	// Index bloat analysis
 	if len(res.IndexBloatStats) > 0 {
 		largeUnusedIndexes := 0
 		for _, ib := range res.IndexBloatStats {
@@ -427,7 +427,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: Replication health
+	// Replication health
 	if len(res.ReplicationStats) > 0 {
 		lagIssues := 0
 		for _, r := range res.ReplicationStats {
@@ -452,7 +452,7 @@ func Run(res collect.Result) Analysis {
 		})
 	}
 
-	// New: Checkpoint analysis
+	// Checkpoint analysis
 	if res.CheckpointStats.RequestedCheckpoints > 0 {
 		reqRatio := float64(res.CheckpointStats.RequestedCheckpoints) /
 			float64(res.CheckpointStats.RequestedCheckpoints+res.CheckpointStats.ScheduledCheckpoints) * 100
@@ -466,7 +466,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: IO performance analysis
+	// IO performance analysis
 	if res.IOStats.HeapBlksRead+res.IOStats.HeapBlksHit > 0 {
 		heapHitRatio := float64(res.IOStats.HeapBlksHit) /
 			float64(res.IOStats.HeapBlksRead+res.IOStats.HeapBlksHit) * 100
@@ -480,7 +480,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: Lock contention analysis
+	// Lock contention analysis
 	if len(res.LockStats) > 0 {
 		totalWaiting := 0
 		for _, l := range res.LockStats {
@@ -498,7 +498,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: Temporary file analysis
+	// Temporary file analysis
 	if len(res.TempFileStats) > 0 {
 		totalTempBytes := int64(0)
 		for _, t := range res.TempFileStats {
@@ -514,7 +514,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: Extension analysis
+	// Extension analysis
 	if len(res.ExtensionStats) > 0 {
 		usefulExtensions := []string{"pg_stat_statements"}
 		missing := []string{}
@@ -540,7 +540,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: Memory configuration analysis
+	// Memory configuration analysis
 	if s, ok := setting("shared_buffers"); ok {
 		if s.Val == "128MB" || s.Val == "16384" { // Default values
 			a.Recommendations = append(a.Recommendations, Finding{
@@ -552,7 +552,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: WAL configuration analysis
+	// WAL configuration analysis
 	if s, ok := setting("wal_level"); ok && s.Val == "replica" {
 		a.Infos = append(a.Infos, Finding{
 			Title:       "WAL level supports replication",
@@ -562,7 +562,7 @@ func Run(res collect.Result) Analysis {
 		})
 	}
 
-	// New: Connection pooling recommendation
+	// Connection pooling recommendation
 	if res.ConnInfo.MaxConnections > 100 {
 		a.Recommendations = append(a.Recommendations, Finding{
 			Title:       "High max_connections setting",
@@ -572,7 +572,7 @@ func Run(res collect.Result) Analysis {
 		})
 	}
 
-	// New: Autovacuum configuration analysis
+	// Autovacuum configuration analysis
 	if s, ok := setting("autovacuum_naptime"); ok {
 		if secs := asSeconds(s, true); secs > 300 { // >5 minutes
 			a.Recommendations = append(a.Recommendations, Finding{
@@ -584,7 +584,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: Maintenance work memory analysis
+	// Maintenance work memory analysis
 	if s, ok := setting("maintenance_work_mem"); ok {
 		if val, _ := asBytes(s, true); val < 64*1024*1024 { // <64MB
 			a.Recommendations = append(a.Recommendations, Finding{
@@ -596,7 +596,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: Random page cost analysis
+	// Random page cost analysis
 	if s, ok := setting("random_page_cost"); ok {
 		if s.Val == "4" { // Default
 			a.Recommendations = append(a.Recommendations, Finding{
@@ -608,7 +608,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: Work memory analysis
+	// Work memory analysis
 	if s, ok := setting("work_mem"); ok {
 		if val, _ := asBytes(s, true); val > 50*1024*1024 { // >50MB
 			a.Warnings = append(a.Warnings, Finding{
@@ -620,7 +620,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: SSL configuration
+	// SSL configuration
 	if res.ConnInfo.SSL == "off" || res.ConnInfo.SSL == "" {
 		a.Recommendations = append(a.Recommendations, Finding{
 			Title:       "SSL not enabled",
@@ -630,7 +630,7 @@ func Run(res collect.Result) Analysis {
 		})
 	}
 
-	// New: Statement timeout analysis
+	// Statement timeout analysis
 	if s, ok := setting("statement_timeout"); ok {
 		if s.Val == "0" { // No timeout
 			a.Recommendations = append(a.Recommendations, Finding{
@@ -642,7 +642,7 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// New: Idle transaction timeout
+	// Idle transaction timeout
 	if s, ok := setting("idle_in_transaction_session_timeout"); ok {
 		if s.Val == "0" { // No timeout
 			a.Recommendations = append(a.Recommendations, Finding{
