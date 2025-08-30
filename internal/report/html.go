@@ -1007,48 +1007,40 @@ const htmlTemplate = `<!doctype html>
   <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
   <script>
-    document.addEventListener('DOMContentLoaded', function() {
-      // --- Toggle table visibility ---
-      var toggleButtons = document.querySelectorAll('.toggle-rows');
-      toggleButtons.forEach(function(button) {
-        button.addEventListener('click', function() {
-          var targetSelector = button.getAttribute('data-target');
-          var targetElement = document.querySelector(targetSelector);
-          if (targetElement) {
-            targetElement.classList.toggle('collapsed');
-            var isCollapsed = targetElement.classList.contains('collapsed');
-            button.textContent = isCollapsed ? 'Show all' : 'Show less';
-          }
-        });
-      });
+    document.body.addEventListener('click', function(e) {
+      var button = e.target.closest('button');
+      if (!button) {
+        return;
+      }
 
-      // --- Toggle full query text visibility ---
-      var showFullButtons = document.querySelectorAll('.show-full');
-      showFullButtons.forEach(function(button) {
-        button.addEventListener('click', function() {
-          var targetSelector = button.getAttribute('data-target');
-          var targetElement = document.querySelector(targetSelector);
-          if (targetElement) {
-            targetElement.classList.toggle('expanded');
-            var isExpanded = targetElement.classList.contains('expanded');
-            button.textContent = isExpanded ? 'Show less' : 'Show full';
-          }
-        });
-      });
+      var targetSelector = button.getAttribute('data-target');
+      if (!targetSelector) {
+        return;
+      }
 
-      // --- Toggle execution plan visibility ---
-      var showPlanButtons = document.querySelectorAll('.show-plan');
-      showPlanButtons.forEach(function(button) {
-        button.addEventListener('click', function() {
-          var targetSelector = button.getAttribute('data-target');
-          var targetElement = document.querySelector(targetSelector);
-          if (targetElement) {
-            var isHidden = targetElement.style.display === 'none';
-            targetElement.style.display = isHidden ? 'block' : 'none';
-            button.textContent = isHidden ? 'Hide plan' : 'Show plan';
-          }
-        });
-      });
+      var targetElement = document.querySelector(targetSelector);
+      if (!targetElement) {
+        return;
+      }
+
+      // Handle 'Show all' / 'Show less' for tables
+      if (button.classList.contains('toggle-rows')) {
+        targetElement.classList.toggle('collapsed');
+        var isCollapsed = targetElement.classList.contains('collapsed');
+        button.textContent = isCollapsed ? 'Show all' : 'Show less';
+      }
+      // Handle 'Show full' / 'Show less' for queries
+      else if (button.classList.contains('show-full')) {
+        targetElement.classList.toggle('expanded');
+        var isExpanded = targetElement.classList.contains('expanded');
+        button.textContent = isExpanded ? 'Show less' : 'Show full';
+      }
+      // Handle 'Show plan' / 'Hide plan' for execution plans
+      else if (button.classList.contains('show-plan')) {
+        var isHidden = targetElement.style.display === 'none' || targetElement.style.display === '';
+        targetElement.style.display = isHidden ? 'block' : 'none';
+        button.textContent = isHidden ? 'Hide plan' : 'Show plan';
+      }
     });
   </script>
 </body>
