@@ -216,10 +216,14 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 			return t.Local().Format("2006-01-02 15:04:05 MST")
 		},
 		"fmtDur": func(d time.Duration) string { return humanizeDuration(d) },
-		// fmtMs converts milliseconds (float64) into a compact human duration like "6h 27m" or "42s"
+		// fmtMs converts milliseconds (float64) into a compact human duration.
+		// For < 1000ms, render with two decimals (e.g., 12.34ms). For >= 1s, use humanized units.
 		"fmtMs": func(ms float64) string {
 			if ms <= 0 {
-				return "0s"
+				return "0ms"
+			}
+			if ms < 1000 {
+				return fmt.Sprintf("%.2fms", ms)
 			}
 			d := time.Duration(ms * float64(time.Millisecond))
 			return humanizeDuration(d)

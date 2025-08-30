@@ -390,8 +390,25 @@
   {{end}}
   <p class="section-note">{{.IndexUnusedSummary}}</p>
 
+  
+  <h2>Tables with lowest index usage</h2>
+  <div id="table-index-usage-low" class="table-wrap collapsed">
+  <table>
+    <thead><tr><th>Schema</th><th>Table</th><th>Index usage</th><th>Rows</th></tr></thead>
+    <tbody>
+    {{if .Res.IndexUsageLow}}
+      {{range .Res.IndexUsageLow}}<tr><td>{{.Schema}}</td><td>{{.Table}}</td><td>{{fmtF2 .IndexUsagePct}}%</td><td>{{fmtI64 .Rows}}</td></tr>{{end}}
+    {{else}}
+      <tr><td colspan="4" class="muted">No data</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-index-usage-low">Show all</button></div>{{end}}
+  </div>
+  {{if .IndexUsageSummary}}<p class="section-note">{{.IndexUsageSummary}}</p>{{end}}
+
   {{if .LargeUnused}}
-  <h3>Large unused indexes (> 100 MB)</h3>
+  <h2>Large unused indexes (> 100 MB)</h2>
   <div id="table-index-large-unused" class="table-wrap collapsed">
     <table>
       <thead>
@@ -417,33 +434,6 @@
   </div>
   {{end}}
 
-  <!-- Settings and extensions grouped at the end -->
-  {{if .Res.ExtensionStats}}
-  <h2>Installed extensions</h2>
-  <div id="table-extensions" class="table-wrap collapsed">
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Version</th>
-          <th>Description</th>
-          <th>Schema</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{range .Res.ExtensionStats}}
-        <tr>
-          <td>{{.Name}}</td>
-          <td>{{.Version}}</td>
-          <td>{{.Description}}</td>
-          <td>{{.Schema}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div>
-  {{end}}
-
   <h2>Settings (subset)</h2>
   <div id="table-settings" class="table-wrap collapsed">
   <table>
@@ -458,22 +448,6 @@
   </table>
   {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-settings">Show all</button></div>{{end}}
   </div>
-
-  <h2>Tables with lowest index usage</h2>
-  <div id="table-index-usage-low" class="table-wrap collapsed">
-  <table>
-    <thead><tr><th>Schema</th><th>Table</th><th>Index usage</th><th>Rows</th></tr></thead>
-    <tbody>
-    {{if .Res.IndexUsageLow}}
-      {{range .Res.IndexUsageLow}}<tr><td>{{.Schema}}</td><td>{{.Table}}</td><td>{{fmtF2 .IndexUsagePct}}%</td><td>{{fmtI64 .Rows}}</td></tr>{{end}}
-    {{else}}
-      <tr><td colspan="4" class="muted">No data</td></tr>
-    {{end}}
-    </tbody>
-  </table>
-  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-index-usage-low">Show all</button></div>{{end}}
-  </div>
-  {{if .IndexUsageSummary}}<p class="section-note">{{.IndexUsageSummary}}</p>{{end}}
 
   <h2>Tables with index counts</h2>
   <div id="table-index-counts" class="table-wrap{{if gt (len .Res.TablesWithIndexCount) 10}} collapsed{{end}}">
