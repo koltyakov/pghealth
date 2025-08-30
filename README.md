@@ -13,19 +13,24 @@ Lightweight PostgreSQL health and AWR-like HTML report generator.
   - or env: `PGURL` or `DATABASE_URL`
   - or as the first positional arg
 - Other flags:
-  - `--out` (default pghealth_report.html)
-  - `--timeout` (default 30s)
+  - `--out` (default `report.html`)
+  - `--timeout` (default `30s`)
+  - `--stats` (e.g. `'24h'`, `'7d'`) to filter `pg_stat_statements` data since a duration
+  - `--open` (default `true`) to open the report after generation
 
 ## Build
 
-Go 1.21+
+Go 1.21+ is required.
 
 ```sh
-go build ./cmd/pghealth
-./pghealth --url postgres://postgres:secret@localhost:5432/postgres?sslmode=prefer --out report.html
-## or with env
-export DATABASE_URL=postgres://postgres:secret@localhost:5432/postgres?sslmode=prefer
-./pghealth --out report.html
+# Build the binary
+go build
+
+# Run with a connection string
+./pghealth --url "postgres://user:pass@host/db"
+
+# Run with a time window for query stats
+./pghealth --url "postgres://user:pass@host/db" --stats 24h
 ```
 
 ## Notes
