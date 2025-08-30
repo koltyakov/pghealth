@@ -55,6 +55,8 @@ func main() {
 	if outPath == "-" || outPath == "" {
 		outPath = "report.html"
 	}
+	// Expand timestamp placeholders in output path
+	outPath = expandOutPlaceholders(outPath, start)
 
 	if err := report.WriteHTML(outPath, res, analysis, collect.Meta{StartedAt: start, Duration: time.Since(start), Version: version}); err != nil {
 		log.Fatalf("failed to write report: %v", err)
@@ -90,7 +92,7 @@ func parseFlags() Flags {
 	defURL := firstNonEmpty(os.Getenv("PGURL"), os.Getenv("DATABASE_URL"))
 
 	flag.StringVar(&f.URL, "url", defURL, "Postgres connection string (e.g., postgres://user:pass@host:5432/db?sslmode=require)")
-	flag.StringVar(&f.Output, "out", "report.html", "Output HTML file path")
+	flag.StringVar(&f.Output, "out", "report.html", "Output HTML file path (supports {ts} -> 2006-01-02_1504)")
 	flag.DurationVar(&f.Timeout, "timeout", 30*time.Second, "Overall timeout")
 	flag.BoolVar(&f.Open, "open", true, "Open the report after generation")
 	flag.StringVar(&f.Stats, "stats", "", "Collect pg_stat_statements data since this duration (e.g. '24h', '7d')")
@@ -187,4 +189,18 @@ func parseSuppressedSet(list string) map[string]struct{} {
 		m[slugify(code)] = struct{}{}
 	}
 	return m
+}
+
+// expandOutPlaceholders replaces {ts} in the output path.
+// {ts} -> 2006-01-02_1504 (e.g., 2024-08-30_0823)
+func expandOutPlaceholders(p string, t time.Time) string {
+	if p == "" {
+		return p
+	}
+	// Ensure t is valid
+	if t.IsZero() {
+		t = time.Now()
+	}
+	// Only {ts}
+	return strings.ReplaceAll(p, "{ts}", t.Format("2006-01-02_1504"))
 }
