@@ -3,8 +3,9 @@ package collect
 import "time"
 
 type Config struct {
-	URL     string
-	Timeout time.Duration
+	URL        string
+	Timeout    time.Duration
+	StatsSince string `json:"stats_since" yaml:"stats_since"`
 }
 
 type Meta struct {

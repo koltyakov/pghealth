@@ -54,12 +54,14 @@ type Flags struct {
 	Output  string
 	Timeout time.Duration
 	Open    bool
+	Stats   string
 }
 
 func (f Flags) ToCollectorConfig() collect.Config {
 	return collect.Config{
-		URL:     f.URL,
-		Timeout: f.Timeout,
+		URL:        f.URL,
+		Timeout:    f.Timeout,
+		StatsSince: f.Stats,
 	}
 }
 
@@ -71,6 +73,7 @@ func parseFlags() Flags {
 	flag.StringVar(&f.Output, "out", "report.html", "Output HTML file path")
 	flag.DurationVar(&f.Timeout, "timeout", 30*time.Second, "Overall timeout")
 	flag.BoolVar(&f.Open, "open", true, "Open the report after generation")
+	flag.StringVar(&f.Stats, "stats", "", "Collect pg_stat_statements data since this duration (e.g. '24h', '7d')")
 	showVersion := flag.Bool("version", false, "Show version and exit")
 	flag.Parse()
 

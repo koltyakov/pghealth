@@ -778,7 +778,12 @@ const htmlTemplate = `<!doctype html>
   {{if .ClientsSummary}}<p class="section-note">{{.ClientsSummary}}</p>{{end}}
 
   {{if .Res.Extensions.PgStatStatements}}
+    {{if .Res.Statements.SkippedReason}}
+    <h2>Top queries</h2>
+    <p class="section-note">{{.Res.Statements.SkippedReason}}</p>
+    {{else}}
   <h2>Top queries by total time</h2>
+  {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}}.</p>{{end}}
   <div id="table-queries-total-time" class="table-wrap collapsed">
   <table>
   <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
@@ -821,6 +826,7 @@ const htmlTemplate = `<!doctype html>
 </div>
 
   <h2>Top queries by calls</h2>
+  {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}}.</p>{{end}}
   <div id="table-queries-calls" class="table-wrap collapsed">
   <table>
   <thead><tr><th>Calls</th><th>Total time</th><th>Mean time (ms)</th><th>Attention</th><th>Query</th></tr></thead>
@@ -840,6 +846,7 @@ const htmlTemplate = `<!doctype html>
   </table>
   {{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows" data-target="#table-queries-calls">Show all</button></div>{{end}}
 </div>
+    {{end}}
   {{else}}
   <p>pg_stat_statements is not enabled in this database. Install and preload it for detailed query insights.</p>
   {{end}}

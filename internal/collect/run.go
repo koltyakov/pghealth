@@ -124,6 +124,8 @@ type Statements struct {
 	TopByIO        []Statement
 	TopByIOBlocks  []Statement
 	StatsResetTime time.Time
+	StatsDuration  time.Duration
+	SkippedReason  string
 }
 
 type Statement struct {
@@ -443,36 +445,53 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			_ = queryRow(ctx, conn, `SELECT stats_reset FROM pg_stat_database WHERE datname = current_database()`, &statsReset)
 		}
 		res.Statements.StatsResetTime = statsReset
+		if !statsReset.IsZero() {
+			res.Statements.StatsDuration = time.Since(statsReset)
+		}
 
-		hasIO := hasPSSIOCols(ctx, conn, res.Extensions.PgStatStatementsSchema)
-		hasBlk := hasPSSBlockCols(ctx, conn, res.Extensions.PgStatStatementsSchema)
-		// Top by total execution time
-		if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByTotal, hasIO, hasBlk); ok {
-			res.Statements.TopByTotalTime = sts
-		}
-		// Top by CPU time (approx = total - IO)
-		if hasIO {
-			if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByCPUApprox, hasIO, hasBlk); ok {
-				res.Statements.TopByCPU = sts
+		// Check if a time window filter is configured
+		var sinceFilter time.Time
+		if cfg.StatsSince != "" {
+			dur, err := time.ParseDuration(cfg.StatsSince)
+			if err == nil {
+				sinceFilter = time.Now().Add(-dur)
 			}
 		}
-		// Top by IO time
-		if hasIO {
-			if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByIO, hasIO, hasBlk); ok {
-				res.Statements.TopByIO = sts
+
+		// If filter is set and later than stats reset, skip collection
+		if !sinceFilter.IsZero() && !statsReset.IsZero() && sinceFilter.After(statsReset) {
+			res.Statements.SkippedReason = fmt.Sprintf("pg_stat_statements data is older than the requested window (%s).", cfg.StatsSince)
+		} else {
+			hasIO := hasPSSIOCols(ctx, conn, res.Extensions.PgStatStatementsSchema)
+			hasBlk := hasPSSBlockCols(ctx, conn, res.Extensions.PgStatStatementsSchema)
+			// Top by total execution time
+			if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByTotal, hasIO, hasBlk); ok {
+				res.Statements.TopByTotalTime = sts
 			}
-		}
-		// Alternative IO ranking by block counts if IO time not available
-		if !hasIO && hasBlk {
-			if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByIOBlocks, false, hasBlk); ok {
-				res.Statements.TopByIOBlocks = sts
+			// Top by CPU time (approx = total - IO)
+			if hasIO {
+				if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByCPUApprox, hasIO, hasBlk); ok {
+					res.Statements.TopByCPU = sts
+				}
 			}
+			// Top by IO time
+			if hasIO {
+				if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByIO, hasIO, hasBlk); ok {
+					res.Statements.TopByIO = sts
+				}
+			}
+			// Alternative IO ranking by block counts if IO time not available
+			if !hasIO && hasBlk {
+				if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByIOBlocks, false, hasBlk); ok {
+					res.Statements.TopByIOBlocks = sts
+				}
+			}
+			// Top by calls
+			if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByCalls, hasIO, hasBlk); ok {
+				res.Statements.TopByCalls = sts
+			}
+			res.Statements.Available = len(res.Statements.TopByTotalTime) > 0 || len(res.Statements.TopByCalls) > 0
 		}
-		// Top by calls
-		if sts, ok := fetchPSS(ctx, conn, res.Extensions.PgStatStatementsSchema, orderByCalls, hasIO, hasBlk); ok {
-			res.Statements.TopByCalls = sts
-		}
-		res.Statements.Available = len(res.Statements.TopByTotalTime) > 0 || len(res.Statements.TopByCalls) > 0
 	}
 
 	// Best-effort EXPLAIN plan collection and analysis for top slow queries (safe subset only)
