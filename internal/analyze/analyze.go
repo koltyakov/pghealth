@@ -213,6 +213,29 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
+	// Memory consumption insights
+	if res.MemoryStats.SharedBuffersBytes > 0 {
+		used := res.MemoryStats.BuffercacheUsedBytes
+		total := res.MemoryStats.SharedBuffersBytes
+		if used > 0 && total > 0 {
+			pct := float64(used) / float64(total) * 100
+			a.Infos = append(a.Infos, Finding{
+				Title:       "Shared buffers utilization",
+				Severity:    "info",
+				Description: fmt.Sprintf("~%.0f%% of shared_buffers in use (%0.2f GB of %0.2f GB)", pct, bytesToGB(used), bytesToGB(total)),
+				Action:      "If utilization is persistently low, consider right-sizing shared_buffers; if high with low hit ratio, consider more memory and indexing.",
+			})
+		}
+	}
+	if res.MemoryStats.TempBytesCurrentDB > 0 {
+		a.Warnings = append(a.Warnings, Finding{
+			Title:       "Temporary file churn",
+			Severity:    "warn",
+			Description: fmt.Sprintf("Current DB used %.2f GB in temp files across %d files (since stats reset)", bytesToGB(res.MemoryStats.TempBytesCurrentDB), res.MemoryStats.TempFilesCurrentDB),
+			Action:      "Increase work_mem for large sorts/hashes, optimize queries to avoid spills, and consider temp_file_limit.",
+		})
+	}
+
 	// Table bloat heuristics
 	type blo struct {
 		schema, table string

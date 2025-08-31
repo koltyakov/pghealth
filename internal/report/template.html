@@ -885,6 +885,30 @@
     data-target="#table-settings">Show all</button></div>{{end}}
   </div>
 
+  <h2>Memory</h2>
+  <div id="table-memory" class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th>Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Block size</td><td>{{fmtBytes .Res.MemoryStats.BlockSizeBytes}}</td></tr>
+        <tr><td>shared_buffers (bytes)</td><td>{{fmtBytes .Res.MemoryStats.SharedBuffersBytes}}</td></tr>
+        <tr><td>shared_buffers (buffers)</td><td>{{fmtI64 .Res.MemoryStats.SharedBuffersSetting}}</td></tr>
+        {{if .Res.MemoryStats.BuffercacheAvailable}}
+        <tr><td>Buffers in use</td><td>{{fmtI64 .Res.MemoryStats.BuffercacheUsedBuffers}} ({{fmtBytes .Res.MemoryStats.BuffercacheUsedBytes}})</td></tr>
+        {{else}}
+        <tr><td>Buffers in use</td><td class="muted">pg_buffercache not installed</td></tr>
+        {{end}}
+        <tr><td>Temp files (current DB)</td><td>{{fmtI64 .Res.MemoryStats.TempFilesCurrentDB}}</td></tr>
+        <tr><td>Temp bytes (current DB)</td><td>{{fmtBytes .Res.MemoryStats.TempBytesCurrentDB}}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   {{if .Res.ReplicationStats}}
   <h2>Replication status</h2>
   <div id="table-replication" class="table-wrap collapsed">

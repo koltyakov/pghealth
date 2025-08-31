@@ -264,12 +264,21 @@ type CheckpointStats struct {
 }
 
 type MemoryStats struct {
-	SharedBuffersUsed  int64
-	SharedBuffersTotal int64
-	WorkMemUsed        int64
-	MaintenanceWorkMem int64
-	TempBuffersUsed    int64
-	LocalBuffersUsed   int64
+	// Config and runtime metrics
+	SharedBuffersUsed      int64 // buffers allocated since start (approx), from bgwriter
+	SharedBuffersTotal     int64 // buffers total allocated (approx), from bgwriter
+	SharedBuffersSetting   int64 // configured shared_buffers (number of buffers)
+	SharedBuffersBytes     int64 // configured shared_buffers in bytes
+	BlockSizeBytes         int64 // PostgreSQL block size in bytes
+	BuffercacheAvailable   bool  // whether pg_buffercache is available
+	BuffercacheUsedBuffers int64 // current number of buffers in use (from pg_buffercache)
+	BuffercacheUsedBytes   int64 // BuffercacheUsedBuffers * BlockSizeBytes
+	TempBytesCurrentDB     int64 // pg_stat_database.temp_bytes for current DB
+	TempFilesCurrentDB     int64 // pg_stat_database.temp_files for current DB
+	WorkMemUsed            int64 // placeholder (not available without sampling)
+	MaintenanceWorkMem     int64 // placeholder (not available without sampling)
+	TempBuffersUsed        int64 // placeholder
+	LocalBuffersUsed       int64 // placeholder
 }
 
 type IOStats struct {
@@ -1214,15 +1223,59 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	}
 
 	// Memory statistics
-	if rows, err := conn.Query(ctx, `select buffers_alloc, buffers_checkpoint + buffers_clean + buffers_backend,
-			0 as work_mem_used, 0 as maint_work_mem, 0 as temp_buffers, 0 as local_buffers
+	// 1) bgwriter counters (approximate buffer allocation stats)
+	if rows, err := conn.Query(ctx, `select buffers_alloc, buffers_checkpoint + buffers_clean + buffers_backend
 		from pg_stat_bgwriter`); err == nil {
 		if rows.Next() {
-			_ = rows.Scan(&res.MemoryStats.SharedBuffersUsed, &res.MemoryStats.SharedBuffersTotal,
-				&res.MemoryStats.WorkMemUsed, &res.MemoryStats.MaintenanceWorkMem,
-				&res.MemoryStats.TempBuffersUsed, &res.MemoryStats.LocalBuffersUsed)
+			_ = rows.Scan(&res.MemoryStats.SharedBuffersUsed, &res.MemoryStats.SharedBuffersTotal)
 		}
 		rows.Close()
+	}
+	// 2) block size and shared_buffers config
+	{
+		var blockSizeStr string
+		_ = queryRow(ctx, conn, `select current_setting('block_size')`, &blockSizeStr)
+		// Try to parse as integer bytes; if fails and contains kB suffix, strip and multiply
+		if n, err := strconv.ParseInt(strings.TrimSpace(blockSizeStr), 10, 64); err == nil && n > 0 {
+			res.MemoryStats.BlockSizeBytes = n
+		} else {
+			// e.g., "8kB"
+			bs := strings.ToLower(strings.TrimSpace(blockSizeStr))
+			if strings.HasSuffix(bs, "kb") {
+				v := strings.TrimSuffix(bs, "kb")
+				if n2, err2 := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err2 == nil && n2 > 0 {
+					res.MemoryStats.BlockSizeBytes = n2 * 1024
+				}
+			}
+		}
+		var sbCount int64
+		_ = queryRow(ctx, conn, `select setting::bigint from pg_settings where name='shared_buffers'`, &sbCount)
+		res.MemoryStats.SharedBuffersSetting = sbCount
+		if res.MemoryStats.BlockSizeBytes > 0 && sbCount > 0 {
+			res.MemoryStats.SharedBuffersBytes = sbCount * res.MemoryStats.BlockSizeBytes
+		}
+	}
+	// 3) pg_buffercache usage if available
+	{
+		var hasBuffercache bool
+		_ = queryRow(ctx, conn, `select exists(select 1 from pg_extension where extname='pg_buffercache')`, &hasBuffercache)
+		res.MemoryStats.BuffercacheAvailable = hasBuffercache
+		if hasBuffercache {
+			var used int64
+			_ = queryRow(ctx, conn, `select count(*) from pg_buffercache`, &used)
+			res.MemoryStats.BuffercacheUsedBuffers = used
+			if res.MemoryStats.BlockSizeBytes > 0 && used > 0 {
+				res.MemoryStats.BuffercacheUsedBytes = used * res.MemoryStats.BlockSizeBytes
+			}
+		}
+	}
+	// 4) Temp file usage from pg_stat_database for current DB
+	{
+		var tf, tb int64
+		if err := conn.QueryRow(ctx, `select coalesce(temp_files,0), coalesce(temp_bytes,0) from pg_stat_database where datname=current_database()`).Scan(&tf, &tb); err == nil {
+			res.MemoryStats.TempFilesCurrentDB = tf
+			res.MemoryStats.TempBytesCurrentDB = tb
+		}
 	}
 
 	// IO statistics
