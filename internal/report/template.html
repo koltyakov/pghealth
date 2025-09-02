@@ -191,7 +191,8 @@
     }
 
     .plan-advice ul {
-      margin: 6px 0 8px 18px;
+      margin: 6px 0 8px 0;
+      padding-left: 16px;
     }
 
     .show-plan {
@@ -248,6 +249,10 @@
     small {
       font-size: 12px;
       color: #4b5563;
+    }
+    /* Outlier bullets spacing */
+    .section-note ul li {
+      margin-bottom: 6px;
     }
   </style>
 </head>
@@ -852,8 +857,8 @@
       </thead>
       <tbody>
         {{if .Res.TablesWithIndexCount}}
-        {{range .Res.TablesWithIndexCount}}
-        <tr{{if gt .BloatPct 20.0}} class="hot"{{end}}>
+  {{range .Res.TablesWithIndexCount}}
+  <tr>
           {{if $.ShowDBIndexCounts}}<td>{{.Database}}</td>{{end}}
           <td>{{.Schema}}</td>
           <td>{{.Name}}</td>
@@ -972,12 +977,12 @@
       <tbody>
         {{if .Res.Statements.TopByTotalTime}}
         {{range $i, $q := .Res.Statements.TopByTotalTime}}
-        <tr class="{{if lt $i 3}}hot{{end}}">
+        <tr>
           <td class="nowrap">{{fmtF0 $q.Calls}}</td>
           <td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td>
           <td class="nowrap">{{fmtMs $q.TotalTime}}</td>
           <td class="nowrap">{{fmtMs $q.MeanTime}}</td>
-          <td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td>
+          <td>{{if $q.NeedsAttention}}<span class="badge-attn">Warn</span>{{else}}<span class="muted">-</span>{{end}}</td>
           <td>
             <pre id="query-pre-total-{{$i}}" class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
             {{if gt (len $q.Query) 200}}<button type="button" class="show-full" onclick="pg_toggleFull(this)" data-target="#query-pre-total-{{$i}}">Show full</button>{{end}}
@@ -1013,6 +1018,13 @@
     </table>
   {{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-queries-total-time" data-header="#hdr-queries-total-time">Show all</button></div>{{end}}
   </div>
+  {{if .AttentionTotalTime}}
+  <div class="section-note"><strong>Queries to pay attention (total time share/outliers):</strong>
+    <ul>
+  {{range .AttentionTotalTime}}<li><a href="{{.Href}}">{{.Query}}</a>{{.Suffix}}</li>{{end}}
+    </ul>
+  </div>
+  {{end}}
 
   <h2 id="hdr-queries-calls">Top queries by calls</h2>
   {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
@@ -1031,12 +1043,12 @@
       <tbody>
         {{if .Res.Statements.TopByCalls}}
         {{range $i, $q := .Res.Statements.TopByCalls}}
-        <tr class="{{if lt $i 3}}hot{{end}}">
+        <tr>
           <td class="nowrap">{{fmtF0 $q.Calls}}</td>
           <td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td>
           <td class="nowrap">{{fmtMs $q.TotalTime}}</td>
           <td class="nowrap">{{fmtMs $q.MeanTime}}</td>
-          <td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td>
+          <td>{{if $q.NeedsAttention}}<span class="badge-attn">Warn</span>{{else}}<span class="muted">-</span>{{end}}</td>
           <td>
             <pre id="query-pre-calls-{{$i}}" class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
             {{if gt (len $q.Query) 200}}<button type="button" class="show-full" onclick="pg_toggleFull(this)" data-target="#query-pre-calls-{{$i}}">Show full</button>{{end}}
@@ -1072,6 +1084,13 @@
     </table>
   {{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-queries-calls" data-header="#hdr-queries-calls">Show all</button></div>{{end}}
   </div>
+  {{if .AttentionCalls}}
+  <div class="section-note"><strong>Queries to pay attention (invocations/outliers):</strong>
+    <ul>
+  {{range .AttentionCalls}}<li><a href="{{.Href}}">{{.Query}}</a>{{.Suffix}}</li>{{end}}
+    </ul>
+  </div>
+  {{end}}
   {{end}}
   {{else}}
   <p>pg_stat_statements is not enabled in this database. Install and preload it for detailed query insights.</p>

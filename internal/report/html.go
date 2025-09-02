@@ -517,6 +517,96 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	if err != nil {
 		return err
 	}
+
+	// Build attention lists for queries: high total time share and high invocations
+	shorten := func(s string, n int) string {
+		s = strings.TrimSpace(s)
+		if len(s) <= n {
+			return s
+		}
+		return s[:n] + "…"
+	}
+	median := func(vals []float64) float64 {
+		if len(vals) == 0 {
+			return 0
+		}
+		vv := make([]float64, len(vals))
+		copy(vv, vals)
+		sort.Slice(vv, func(i, j int) bool { return vv[i] < vv[j] })
+		n := len(vv)
+		if n%2 == 1 {
+			return vv[n/2]
+		}
+		return (vv[n/2-1] + vv[n/2]) / 2.0
+	}
+	type attnItem struct {
+		Query  string
+		Suffix string
+		Href   string
+	}
+	var attentionTotalTime []attnItem
+	if len(res.Statements.TopByTotalTime) > 0 {
+		var sumTT float64
+		vals := make([]float64, 0, len(res.Statements.TopByTotalTime))
+		for _, s := range res.Statements.TopByTotalTime {
+			sumTT += s.TotalTime
+			vals = append(vals, s.TotalTime)
+		}
+		med := median(vals)
+		for i, s := range res.Statements.TopByTotalTime {
+			if sumTT <= 0 {
+				break
+			}
+			share := s.TotalTime / sumTT
+			// Require at least 10% share to list, even if it's an outlier by median
+			if share < 0.10 {
+				continue
+			}
+			if share >= 0.20 || (med > 0 && s.TotalTime >= 1.8*med) {
+				q := shorten(s.Query, 120)
+				suf := fmt.Sprintf(" — %.0f%% of total time.", share*100)
+				href := fmt.Sprintf("#query-pre-total-%d", i)
+				attentionTotalTime = append(attentionTotalTime, attnItem{Query: q, Suffix: suf, Href: href})
+				if len(attentionTotalTime) >= 5 {
+					break
+				}
+			}
+		}
+	}
+	var attentionCalls []attnItem
+	if len(res.Statements.TopByCalls) > 0 {
+		var sumCalls float64
+		vals := make([]float64, 0, len(res.Statements.TopByCalls))
+		for _, s := range res.Statements.TopByCalls {
+			sumCalls += s.Calls
+			vals = append(vals, s.Calls)
+		}
+		med := median(vals)
+		for i, s := range res.Statements.TopByCalls {
+			if sumCalls <= 0 {
+				break
+			}
+			share := s.Calls / sumCalls
+			// Require at least 10% share to list, even if it's an outlier by median
+			if share < 0.10 {
+				continue
+			}
+			if share >= 0.20 || (med > 0 && s.Calls >= 2.0*med) {
+				// Prefer calls per hour if available
+				callsStr := fmtFloatPrecSep(s.Calls, 0) + " calls"
+				if s.CallsPerHour > 0 {
+					callsStr = fmtFloatPrecSep(s.CallsPerHour, 1) + " calls/hr"
+				}
+				q := shorten(s.Query, 120)
+				suf := fmt.Sprintf(" — %.0f%% of total invocations (%s).", share*100, callsStr)
+				href := fmt.Sprintf("#query-pre-calls-%d", i)
+				attentionCalls = append(attentionCalls, attnItem{Query: q, Suffix: suf, Href: href})
+				if len(attentionCalls) >= 5 {
+					break
+				}
+			}
+		}
+	}
 	data := struct {
 		Res                 collect.Result
 		A                   analyze.Analysis
@@ -547,12 +637,18 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		AutovacSummary     string
 		WaitsSummary       string
 		BloatPctNote       string
+		// attention lists
+		AttentionTotalTime []attnItem
+		AttentionCalls     []attnItem
 	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize,
 		ShowDBTablesByRows: showDBTablesByRows, ShowDBTablesBySize: showDBTablesBySize, ShowDBIndexUnused: showDBIndexUnused, ShowDBIndexUsageLow: showDBIndexUsageLow, ShowDBIndexCounts: showDBIndexCounts,
 		ReclaimByDB: reclaimList, ReclaimTotal: reclaimTotal,
 		ConnSummary: connSummary, DBsSummary: dbsSummary, CacheHitsSummary: cacheHitsSummary, IndexUnusedSummary: indexUnusedSummary,
 		IndexUsageSummary: indexUsageSummary, ClientsSummary: clientsSummary, BlockingSummary: blockingSummary, LongRunningSummary: longRunningSummary, AutovacSummary: autovacSummary, WaitsSummary: waitsSummary,
-		BloatPctNote: bloatPctNote}
+		BloatPctNote:       bloatPctNote,
+		AttentionTotalTime: attentionTotalTime,
+		AttentionCalls:     attentionCalls,
+	}
 	return tmpl.Execute(f, data)
 }
 
