@@ -44,6 +44,12 @@ type Result struct {
 	LockStats            []LockStat
 	TempFileStats        []TempFileStat
 	ExtensionStats       []ExtensionStat
+	// Extras (pg_monitor helpful)
+	WaitEvents          []WaitEventStat
+	FunctionStats       []FunctionStat
+	WAL                 *WALStat
+	ProgressCreateIndex []ProgressCreateIndex
+	ProgressAnalyze     []ProgressAnalyze
 }
 
 type ConnInfo struct {
@@ -315,6 +321,52 @@ type ExtensionStat struct {
 	Version     string
 	Description string
 	Schema      string
+}
+
+// WaitEventStat summarizes waits from pg_stat_activity
+type WaitEventStat struct {
+	Type  string
+	Event string
+	Count int
+}
+
+// FunctionStat from pg_stat_user_functions
+type FunctionStat struct {
+	Schema    string
+	Name      string
+	Calls     int64
+	TotalTime float64
+	SelfTime  float64
+}
+
+// WALStat from pg_stat_wal
+type WALStat struct {
+	Records    int64
+	FullPage   int64
+	Bytes      int64
+	StatsReset time.Time
+}
+
+// ProgressCreateIndex from pg_stat_progress_create_index
+type ProgressCreateIndex struct {
+	Datname      string
+	Relation     string
+	Phase        string
+	BlocksDone   int64
+	BlocksTotal  int64
+	TuplesDone   int64
+	TuplesTotal  int64
+	LockersDone  int64
+	LockersTotal int64
+}
+
+// ProgressAnalyze from pg_stat_progress_analyze
+type ProgressAnalyze struct {
+	Datname     string
+	Relation    string
+	Phase       string
+	SampleScans int64
+	SampleTotal int64
 }
 
 // planPerListCap is the soft cap of planned queries per list; suspect queries can exceed this cap.
@@ -1205,6 +1257,72 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			var rs ReplicationStat
 			_ = rows.Scan(&rs.Name, &rs.State, &rs.SyncState, &rs.SyncPriority, &rs.WriteLag, &rs.FlushLag, &rs.ReplayLag)
 			res.ReplicationStats = append(res.ReplicationStats, rs)
+		}
+		rows.Close()
+	}
+
+	// Wait events (top)
+	if rows, err := conn.Query(ctx, `select coalesce(wait_event_type,'none') as type, coalesce(wait_event,'none') as event, count(*)
+		from pg_stat_activity
+		where wait_event is not null
+		group by 1,2
+		order by 3 desc
+		limit 20`); err == nil {
+		for rows.Next() {
+			var w WaitEventStat
+			_ = rows.Scan(&w.Type, &w.Event, &w.Count)
+			res.WaitEvents = append(res.WaitEvents, w)
+		}
+		rows.Close()
+	}
+
+	// Top functions by total time (if view available)
+	if rows, err := conn.Query(ctx, `select schemaname, funcname, calls, coalesce(total_time,0), coalesce(self_time,0)
+		from pg_stat_user_functions
+		order by total_time desc nulls last limit 20`); err == nil {
+		for rows.Next() {
+			var f FunctionStat
+			_ = rows.Scan(&f.Schema, &f.Name, &f.Calls, &f.TotalTime, &f.SelfTime)
+			res.FunctionStats = append(res.FunctionStats, f)
+		}
+		rows.Close()
+	}
+
+	// WAL statistics (if view exists)
+	{
+		var hasWAL bool
+		_ = queryRow(ctx, conn, `select exists(select 1 from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname='pg_catalog' and c.relname='pg_stat_wal')`, &hasWAL)
+		if hasWAL {
+			var ws WALStat
+			if err := conn.QueryRow(ctx, `select wal_records, wal_fpi, wal_bytes, stats_reset from pg_stat_wal`).Scan(&ws.Records, &ws.FullPage, &ws.Bytes, &ws.StatsReset); err == nil {
+				res.WAL = &ws
+			}
+		}
+	}
+
+	// Progress: CREATE INDEX (if view exists)
+	if rows, err := conn.Query(ctx, `select a.datname, p.relid::regclass::text as relation, p.phase,
+		coalesce(p.blocks_done,0), coalesce(p.blocks_total,0), coalesce(p.tuples_done,0), coalesce(p.tuples_total,0),
+		coalesce(p.lockers_done,0), coalesce(p.lockers_total,0)
+		from pg_stat_progress_create_index p join pg_stat_activity a on a.pid=p.pid
+		order by a.datname, relation`); err == nil {
+		for rows.Next() {
+			var pr ProgressCreateIndex
+			_ = rows.Scan(&pr.Datname, &pr.Relation, &pr.Phase, &pr.BlocksDone, &pr.BlocksTotal, &pr.TuplesDone, &pr.TuplesTotal, &pr.LockersDone, &pr.LockersTotal)
+			res.ProgressCreateIndex = append(res.ProgressCreateIndex, pr)
+		}
+		rows.Close()
+	}
+
+	// Progress: ANALYZE (if view exists)
+	if rows, err := conn.Query(ctx, `select a.datname, p.relid::regclass::text as relation, p.phase,
+		coalesce(p.sample_blks_scanned,0), coalesce(p.sample_blks_total,0)
+		from pg_stat_progress_analyze p join pg_stat_activity a on a.pid=p.pid
+		order by a.datname, relation`); err == nil {
+		for rows.Next() {
+			var pa ProgressAnalyze
+			_ = rows.Scan(&pa.Datname, &pa.Relation, &pa.Phase, &pa.SampleScans, &pa.SampleTotal)
+			res.ProgressAnalyze = append(res.ProgressAnalyze, pa)
 		}
 		rows.Close()
 	}

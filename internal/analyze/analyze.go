@@ -584,6 +584,44 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
+	// Wait events overview
+	if len(res.WaitEvents) > 0 {
+		// Highlight if many LWLock/IO waits
+		ioWait := 0
+		lockWait := 0
+		for _, w := range res.WaitEvents {
+			if strings.EqualFold(w.Type, "IO") {
+				ioWait += w.Count
+			}
+			if strings.Contains(strings.ToUpper(w.Type), "LWLOCK") || strings.Contains(strings.ToUpper(w.Event), "LOCK") {
+				lockWait += w.Count
+			}
+		}
+		if ioWait > 0 {
+			a.Recommendations = append(a.Recommendations, Finding{Title: "Significant IO waits", Severity: "rec", Code: "io-waits",
+				Description: "pg_stat_activity shows IO-related wait events; workload may be IO-bound.",
+				Action:      "Increase memory for caching, optimize queries and indexes to reduce IO, and consider faster storage."})
+		}
+		if lockWait > 0 {
+			a.Warnings = append(a.Warnings, Finding{Title: "Lock-related waits observed", Severity: "warn", Code: "lock-waits",
+				Description: "Wait events include locks/LWLocks; investigate blockers and long transactions.",
+				Action:      "Use blocking section, add indexes to reduce lock durations, and set timeouts."})
+		}
+	}
+
+	// WAL volume context
+	if res.WAL != nil && res.WAL.Bytes > 0 && !res.Statements.StatsResetTime.IsZero() {
+		dur := time.Since(res.WAL.StatsReset)
+		if dur > 0 {
+			ratio := float64(res.WAL.Bytes) / dur.Seconds()
+			if ratio > 10*1024*1024 { // >10MB/s
+				a.Warnings = append(a.Warnings, Finding{Title: "High WAL write rate", Severity: "warn", Code: "high-wal",
+					Description: fmt.Sprintf("~%.1f MB/s since %s", ratio/(1024*1024), formatLocalTime(res.WAL.StatsReset)),
+					Action:      "Tune checkpoint settings (max_wal_size, checkpoint_timeout), reduce unnecessary churn (hot updates, indexes), and review autovacuum settings."})
+			}
+		}
+	}
+
 	// Lock contention analysis
 	if len(res.LockStats) > 0 {
 		totalWaiting := 0

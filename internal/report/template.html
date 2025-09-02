@@ -1031,6 +1031,99 @@
   </div>
   {{end}}
 
+  {{if .Res.WaitEvents}}
+  <h2>Wait events (top)</h2>
+  <div id="table-waits" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr><th>Type</th><th>Event</th><th>Count</th></tr>
+      </thead>
+      <tbody>
+        {{range .Res.WaitEvents}}
+        <tr><td>{{.Type}}</td><td>{{.Event}}</td><td>{{.Count}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Res.FunctionStats}}
+  <h2>Top functions by total time</h2>
+  <div id="table-functions" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr><th>Schema</th><th>Function</th><th>Calls</th><th>Total time</th><th>Self time</th></tr>
+      </thead>
+      <tbody>
+        {{range .Res.FunctionStats}}
+        <tr><td>{{.Schema}}</td><td>{{.Name}}</td><td>{{fmtI64 .Calls}}</td><td>{{fmtF2 .TotalTime}} ms</td><td>{{fmtF2 .SelfTime}} ms</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Res.WAL}}
+  <h2>WAL statistics</h2>
+  <div id="table-wal" class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Metric</th><th>Value</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>WAL records</td><td>{{fmtI64 .Res.WAL.Records}}</td></tr>
+        <tr><td>Full-page images</td><td>{{fmtI64 .Res.WAL.FullPage}}</td></tr>
+        <tr><td>WAL bytes</td><td>{{fmtBytes .Res.WAL.Bytes}}</td></tr>
+        <tr><td>Stats reset</td><td>{{fmtTime .Res.WAL.StatsReset}}</td></tr>
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Res.ProgressCreateIndex}}
+  <h2>Index creation progress</h2>
+  <div id="table-progress-ci" class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>DB</th><th>Relation</th><th>Phase</th><th>Blocks</th><th>Tuples</th><th>Lockers</th></tr>
+      </thead>
+      <tbody>
+        {{range .Res.ProgressCreateIndex}}
+        <tr>
+          <td>{{.Datname}}</td>
+          <td>{{.Relation}}</td>
+          <td>{{.Phase}}</td>
+          <td>{{fmtI64 .BlocksDone}} / {{fmtI64 .BlocksTotal}}</td>
+          <td>{{fmtI64 .TuplesDone}} / {{fmtI64 .TuplesTotal}}</td>
+          <td>{{fmtI64 .LockersDone}} / {{fmtI64 .LockersTotal}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Res.ProgressAnalyze}}
+  <h2>Analyze progress</h2>
+  <div id="table-progress-analyze" class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>DB</th><th>Relation</th><th>Phase</th><th>Sample blocks</th></tr>
+      </thead>
+      <tbody>
+        {{range .Res.ProgressAnalyze}}
+        <tr>
+          <td>{{.Datname}}</td>
+          <td>{{.Relation}}</td>
+          <td>{{.Phase}}</td>
+          <td>{{fmtI64 .SampleScans}} / {{fmtI64 .SampleTotal}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
   <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime
     .Meta.StartedAt}} in {{fmtDur .Meta.Duration}}</footer>
 
