@@ -290,6 +290,62 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		}
 		return fmt.Sprintf("Top client: %s (%d connection%s).", who, top.Count, suffix)
 	}()
+	waitsSummary := func() string {
+		if len(res.WaitEvents) == 0 {
+			return ""
+		}
+		// Try to surface the analyzer's synthesized wait info and key actions concisely
+		top := ""
+		for _, f := range a.Infos {
+			if f.Title == "Top wait types" {
+				top = f.Description
+				break
+			}
+		}
+		// Short action hints for common wait categories
+		ioHint := false
+		lockHint := false
+		pinHint := false
+		for _, f := range a.Warnings {
+			if f.Code == "high-wal" {
+				continue
+			}
+			if f.Code == "io-waits" {
+				ioHint = true
+			}
+			if f.Code == "lock-waits" {
+				lockHint = true
+			}
+			if f.Code == "bufferpin-waits" {
+				pinHint = true
+			}
+		}
+		for _, f := range a.Recommendations {
+			if f.Code == "io-waits" {
+				ioHint = true
+			}
+			if f.Code == "lock-waits" {
+				lockHint = true
+			}
+			if f.Code == "bufferpin-waits" {
+				pinHint = true
+			}
+		}
+		parts := []string{}
+		if top != "" {
+			parts = append(parts, top)
+		}
+		if ioHint {
+			parts = append(parts, "IO waits: improve cache hit (shared_buffers, indexing), tune effective_io_concurrency and checkpoints, consider faster storage.")
+		}
+		if lockHint {
+			parts = append(parts, "Lock waits: find blockers, shorten transactions, add indexes, and consider lock/statement timeouts.")
+		}
+		if pinHint {
+			parts = append(parts, "BufferPin: avoid long idle-in-transaction; set idle_in_transaction_session_timeout.")
+		}
+		return strings.Join(parts, " ")
+	}()
 	blockingSummary := func() string {
 		if len(res.Blocking) == 0 {
 			return "Healthy: no blocking detected."
@@ -399,12 +455,13 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		BlockingSummary    string
 		LongRunningSummary string
 		AutovacSummary     string
+		WaitsSummary       string
 		BloatPctNote       string
 	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize,
 		ShowDBTablesByRows: showDBTablesByRows, ShowDBTablesBySize: showDBTablesBySize, ShowDBIndexUnused: showDBIndexUnused, ShowDBIndexUsageLow: showDBIndexUsageLow, ShowDBIndexCounts: showDBIndexCounts,
 		ReclaimByDB: reclaimList, ReclaimTotal: reclaimTotal,
 		ConnSummary: connSummary, DBsSummary: dbsSummary, CacheHitsSummary: cacheHitsSummary, IndexUnusedSummary: indexUnusedSummary,
-		IndexUsageSummary: indexUsageSummary, ClientsSummary: clientsSummary, BlockingSummary: blockingSummary, LongRunningSummary: longRunningSummary, AutovacSummary: autovacSummary,
+		IndexUsageSummary: indexUsageSummary, ClientsSummary: clientsSummary, BlockingSummary: blockingSummary, LongRunningSummary: longRunningSummary, AutovacSummary: autovacSummary, WaitsSummary: waitsSummary,
 		BloatPctNote: bloatPctNote}
 	return tmpl.Execute(f, data)
 }

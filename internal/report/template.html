@@ -569,6 +569,7 @@
       </tbody>
     </table>
   </div>
+  {{if .WaitsSummary}}<p class="section-note">{{.WaitsSummary}}</p>{{end}}
   {{end}}
 
   {{if .Res.LockStats}}
