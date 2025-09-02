@@ -281,7 +281,7 @@
     {{end}}
   </section>
 
-  <!-- Databases first -->
+  <!-- System & configuration -->
   <h2>Databases</h2>
   <div id="table-databases" class="table-wrap collapsed">
     <table>
@@ -308,12 +308,10 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-databases">Show all</button></div>{{end}}
+  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-databases">Show all</button></div>{{end}}
   </div>
   {{if .DBsSummary}}<p class="section-note">{{.DBsSummary}}</p>{{end}}
 
-  <!-- Connections grouped with connections by client -->
   <h2>Connections</h2>
   <div id="table-connections" class="table-wrap collapsed">
     <table>
@@ -338,8 +336,7 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Activity) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-connections">Show all</button></div>{{end}}
+  {{if gt (len .Activity) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-connections">Show all</button></div>{{end}}
   </div>
   {{if .ConnSummary}}<p class="section-note">{{.ConnSummary}}</p>{{end}}
 
@@ -373,10 +370,99 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-clients">Show all</button></div>{{end}}
+  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-clients">Show all</button></div>{{end}}
   </div>
   {{if .ClientsSummary}}<p class="section-note">{{.ClientsSummary}}</p>{{end}}
+
+  <h2>Settings (subset)</h2>
+  <div id="table-settings" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Value</th>
+          <th>Unit</th>
+          <th>Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Res.Settings}}
+        {{range .Res.Settings}}<tr>
+          <td>{{.Name}}</td>
+          <td>{{.Val}}</td>
+          <td>{{.Unit}}</td>
+          <td>{{.Source}}</td>
+        </tr>{{end}}
+        {{else}}
+        <tr>
+          <td colspan="4" class="muted">No data</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-settings">Show all</button></div>{{end}}
+  </div>
+
+  {{if .Res.ExtensionStats}}
+  <h2>Installed extensions</h2>
+  <div id="table-extensions" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          {{/* Show Database column if entries come from multiple DBs */}}
+          {{- $showDB := false -}}
+          {{- if gt (len .Res.ExtensionStats) 0 -}}
+          {{- $first := (index .Res.ExtensionStats 0).Database -}}
+          {{- range .Res.ExtensionStats -}}
+          {{- if ne .Database $first -}}{{- $showDB = true -}}{{- end -}}
+          {{- end -}}
+          {{- end -}}
+          {{if $showDB}}<th>Database</th>{{end}}
+          <th>Name</th>
+          <th>Version</th>
+          <th>Description</th>
+          <th>Schema</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.ExtensionStats}}
+        <tr>
+          {{if $showDB}}<td>{{.Database}}</td>{{end}}
+          <td>{{.Name}}</td>
+          <td>{{.Version}}</td>
+          <td>{{.Description}}</td>
+          <td>{{.Schema}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  <!-- Resource & I/O -->
+  <h2>Memory</h2>
+  <div id="table-memory" class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th>Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Block size</td><td>{{fmtBytes .Res.MemoryStats.BlockSizeBytes}}</td></tr>
+        <tr><td>shared_buffers (bytes)</td><td>{{fmtBytes .Res.MemoryStats.SharedBuffersBytes}}</td></tr>
+        <tr><td>shared_buffers (buffers)</td><td>{{fmtI64 .Res.MemoryStats.SharedBuffersSetting}}</td></tr>
+        {{if .Res.MemoryStats.BuffercacheAvailable}}
+        <tr><td>Buffers in use</td><td>{{fmtI64 .Res.MemoryStats.BuffercacheUsedBuffers}} ({{fmtBytes .Res.MemoryStats.BuffercacheUsedBytes}})</td></tr>
+        {{else}}
+        <tr><td>Buffers in use</td><td class="muted">pg_buffercache not installed</td></tr>
+        {{end}}
+        <tr><td>Temp files (current DB)</td><td>{{fmtI64 .Res.MemoryStats.TempFilesCurrentDB}}</td></tr>
+        <tr><td>Temp bytes (current DB)</td><td>{{fmtBytes .Res.MemoryStats.TempBytesCurrentDB}}</td></tr>
+      </tbody>
+    </table>
+  </div>
 
   <h2>Cache hit ratio by database</h2>
   <p class="muted">Interpretation: closer to 100% is better. Values above ~99% are typical for OLTP workloads. Lower
@@ -407,341 +493,96 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-cache-hit">Show all</button></div>{{end}}
+  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-cache-hit">Show all</button></div>{{end}}
   </div>
   {{if .CacheHitsSummary}}<p class="section-note">{{.CacheHitsSummary}}</p>{{end}}
 
-  <h2>Top tables by rows</h2>
-  <div id="table-tables-by-rows" class="table-wrap collapsed">
+  {{if .Res.WAL}}
+  <h2>WAL statistics</h2>
+  <div id="table-wal" class="table-wrap">
     <table>
       <thead>
-        <tr>
-          {{if .ShowDBTablesByRows}}<th>Database</th>{{end}}
-          <th>Schema</th>
-          <th>Table</th>
-          <th>Rows</th>
-        </tr>
+        <tr><th>Metric</th><th>Value</th></tr>
       </thead>
       <tbody>
-        {{if .TablesByRows}}
-        {{range $i, $t := .TablesByRows}}{{if lt $i 100}}<tr>
-          {{if $.ShowDBTablesByRows}}<td>{{$t.Database}}</td>{{end}}
-          <td>{{$t.Schema}}</td>
-          <td>{{$t.Name}}</td>
-          <td>{{fmtI64 $t.NLiveTup}}</td>
-        </tr>{{end}}{{end}}
-        {{else}}
-        <tr>
-          {{if .ShowDBTablesByRows}}<td colspan="4" class="muted">No data</td>{{else}}<td colspan="3" class="muted">No data</td>{{end}}
-        </tr>
-        {{end}}
+        <tr><td>WAL records</td><td>{{fmtI64 .Res.WAL.Records}}</td></tr>
+        <tr><td>Full-page images</td><td>{{fmtI64 .Res.WAL.FullPage}}</td></tr>
+        <tr><td>WAL bytes</td><td>{{fmtBytes .Res.WAL.Bytes}}</td></tr>
+        <tr><td>Stats reset</td><td>{{fmtTime .Res.WAL.StatsReset}}</td></tr>
       </tbody>
     </table>
-  {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-tables-by-rows">Show all</button></div>{{end}}
-  </div>
-  {{/* No explicit summary for this table to avoid noise */}}
-
-  <h2>Top tables by size</h2>
-  <div id="table-tables-by-size" class="table-wrap collapsed">
-    <table>
-      <thead>
-        <tr>
-          {{if .ShowDBTablesBySize}}<th>Database</th>{{end}}
-          <th>Schema</th>
-          <th>Table</th>
-          <th>Size</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{if .TablesBySize}}
-        {{range $i, $t := .TablesBySize}}{{if lt $i 100}}<tr>
-          {{if $.ShowDBTablesBySize}}<td>{{$t.Database}}</td>{{end}}
-          <td>{{$t.Schema}}</td>
-          <td>{{$t.Name}}</td>
-          <td>{{fmtBytes $t.SizeBytes}}</td>
-        </tr>{{end}}{{end}}
-        {{else}}
-        <tr>
-          {{if .ShowDBTablesBySize}}<td colspan="4" class="muted">No data</td>{{else}}<td colspan="3" class="muted">No data</td>{{end}}
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-tables-by-size">Show all</button></div>{{end}}
-  </div>
-  {{/* No explicit summary for this table to avoid noise */}}
-
-  {{if .Res.IndexUnused}}
-  <h2>Unused indexes</h2>
-  <div id="table-index-unused" class="table-wrap{{if gt (len .Res.IndexUnused) 10}} collapsed{{end}}">
-    <table>
-      <thead>
-        <tr>
-          {{if .ShowDBIndexUnused}}<th>Database</th>{{end}}
-          <th>Schema</th>
-          <th>Table</th>
-          <th>Index</th>
-          <th>Size</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{range .Res.IndexUnused}}<tr>
-          {{if $.ShowDBIndexUnused}}<td>{{.Database}}</td>{{end}}
-          <td>{{.Schema}}</td>
-          <td>{{.Table}}</td>
-          <td>{{.Name}}</td>
-          <td>{{fmtBytes .SizeBytes}} {{if gt .SizeBytes 104857600}}<span class="badge-attn">Large</span>{{end}}</td>
-        </tr>{{end}}
-      </tbody>
-    </table>
-  {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-index-unused">Show all</button></div>{{end}}
   </div>
   {{end}}
-  <p class="section-note">{{.IndexUnusedSummary}}</p>
-  <h2>Tables with lowest index usage</h2>
-  <div id="table-index-usage-low" class="table-wrap collapsed">
-    <table>
-      <thead>
-        <tr>
-          {{if .ShowDBIndexUsageLow}}<th>Database</th>{{end}}
-          <th>Schema</th>
-          <th>Table</th>
-          <th>Index usage</th>
-          <th>Rows</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{if .Res.IndexUsageLow}}
-        {{range .Res.IndexUsageLow}}<tr>
-          {{if $.ShowDBIndexUsageLow}}<td>{{.Database}}</td>{{end}}
-          <td>{{.Schema}}</td>
-          <td>{{.Table}}</td>
-          <td>{{fmtF2 .IndexUsagePct}}%</td>
-          <td>{{fmtI64 .Rows}}</td>
-        </tr>{{end}}
-        {{else}}
-        <tr>
-          {{if .ShowDBIndexUsageLow}}<td colspan="5" class="muted">No data</td>{{else}}<td colspan="4" class="muted">No data</td>{{end}}
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-index-usage-low">Show all</button></div>{{end}}
-  </div>
-  {{if .IndexUsageSummary}}<p class="section-note">{{.IndexUsageSummary}}</p>{{end}}
 
-  
-
-  
-  <h2>Tables dead rows bloat</h2>
-  <div id="table-index-counts" class="table-wrap{{if gt (len .Res.TablesWithIndexCount) 10}} collapsed{{end}}">
-    <table>
-      <thead>
-        <tr>
-          {{if .ShowDBIndexCounts}}<th>Database</th>{{end}}
-          <th>Schema</th>
-          <th>Table</th>
-          <th>Index Count</th>
-          <th>Size</th>
-          <th>Rows</th>
-          <th>Dead rows</th>
-          <th>Bloat</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{if .Res.TablesWithIndexCount}}
-        {{range .Res.TablesWithIndexCount}}
-        <tr{{if gt .BloatPct 20.0}} class="hot"{{end}}>
-          {{if $.ShowDBIndexCounts}}<td>{{.Database}}</td>{{end}}
-          <td>{{.Schema}}</td>
-          <td>{{.Name}}</td>
-          <td>{{.IndexCount}}</td>
-          <td>{{fmtBytes .SizeBytes}}</td>
-          <td>{{fmtThousands .RowCount}}</td>
-          <td>{{fmtThousands .DeadRows}}</td>
-          <td>{{fmtBytes (bloatBytes .SizeBytes .BloatPct)}} ({{printf "%.1f" .BloatPct}}%)</td>
-          </tr>
-          {{end}}
-          {{else}}
-          <tr>
-            {{if .ShowDBIndexCounts}}<td colspan="8" class="muted">No data</td>{{else}}<td colspan="7" class="muted">No data</td>{{end}}
-          </tr>
-          {{end}}
-      </tbody>
-    </table>
-  {{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-index-counts">Show all</button></div>{{end}}
-  </div>
-  {{if .BloatPctNote}}<p class="section-note">{{.BloatPctNote}}</p>{{end}}
-
-  {{if .ReclaimByDB}}
-  <h3>Reclaimable space by database (estimate)</h3>
-  <div id="table-reclaim-by-db" class="table-wrap">
+  {{if .Res.TempFileStats}}
+  <h2>Temporary file usage</h2>
+  <div id="table-temp-files" class="table-wrap collapsed">
     <table>
       <thead>
         <tr>
           <th>Database</th>
-          <th>Reclaimable (est.)</th>
+          <th>PID</th>
+          <th>Files</th>
+          <th>Size</th>
         </tr>
       </thead>
       <tbody>
-        {{range .ReclaimByDB}}
+        {{range .Res.TempFileStats}}
         <tr>
-          <td>{{.Database}}</td>
+          <td>{{.Datname}}</td>
+          <td>{{.PID}}</td>
+          <td>{{fmtI64 .Files}}</td>
           <td>{{fmtBytes .Bytes}}</td>
         </tr>
         {{end}}
       </tbody>
-      <tfoot>
-        <tr>
-          <th>Total</th>
-          <th>{{fmtBytes .ReclaimTotal}}</th>
-        </tr>
-      </tfoot>
     </table>
   </div>
   {{end}}
 
-  {{if .Res.Extensions.PgStatStatements}}
-  {{if .Res.Statements.SkippedReason}}
-  <h2>Top queries</h2>
-  <p class="section-note">{{.Res.Statements.SkippedReason}}</p>
-  {{else}}
-  <h2>Top queries by total time</h2>
-  {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur
-    .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
-  <div id="table-queries-total-time" class="table-wrap collapsed">
+  <!-- Concurrency & waits -->
+  {{if .Res.WaitEvents}}
+  <h2>Wait events (top)</h2>
+  <div id="table-waits" class="table-wrap collapsed">
     <table>
       <thead>
-        <tr>
-          <th>Calls</th>
-          <th>Calls/hr</th>
-          <th>Total time</th>
-          <th>Mean time</th>
-          <th>Attention</th>
-          <th>Query</th>
-        </tr>
+        <tr><th>Type</th><th>Event</th><th>Count</th></tr>
       </thead>
       <tbody>
-        {{if .Res.Statements.TopByTotalTime}}
-        {{range $i, $q := .Res.Statements.TopByTotalTime}}
-        <tr class="{{if lt $i 3}}hot{{end}}">
-          <td class="nowrap">{{fmtF0 $q.Calls}}</td>
-          <td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td>
-          <td class="nowrap">{{fmtMs $q.TotalTime}}</td>
-          <td class="nowrap">{{fmtMs $q.MeanTime}}</td>
-          <td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span
-              class="muted">-</span>{{end}}</td>
-          <td>
-            <pre id="query-pre-total-{{$i}}"
-              class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
-            {{if gt (len $q.Query) 200}}<button type="button" class="show-full" onclick="pg_toggleFull(this)"
-              data-target="#query-pre-total-{{$i}}">Show full</button>{{end}}
-            {{if $q.Advice}}
-            <div class="plan-advice">
-              {{if $q.Advice.Highlights}}
-              <h4>Plan highlights</h4>
-              <ul>
-                {{range $q.Advice.Highlights}}<li>{{.}}</li>{{end}}
-              </ul>
-              {{end}}
-              {{if $q.Advice.Suggestions}}
-              <h4>Suggestions</h4>
-              <ul>
-                {{range $q.Advice.Suggestions}}<li>{{.}}</li>{{end}}
-              </ul>
-              {{end}}
-              {{if $q.Advice.Plan}}
-              <pre id="plan-pre-total-{{$i}}" class="plan-pre" style="display:none">{{$q.Advice.Plan}}</pre>
-              <button type="button" class="show-plan" onclick="pg_togglePlan(this)" data-target="#plan-pre-total-{{$i}}">Show plan</button>
-              {{end}}
-            </div>
-            {{end}}
-          </td>
-        </tr>
-        {{end}}
-        {{else}}
-        <tr>
-          <td colspan="6" class="muted">No data</td>
-        </tr>
+        {{range .Res.WaitEvents}}
+        <tr><td>{{.Type}}</td><td>{{.Event}}</td><td>{{.Count}}</td></tr>
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-queries-total-time">Show all</button></div>{{end}}
-  </div>
-
-  <h2>Top queries by calls</h2>
-  {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur
-    .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
-  <div id="table-queries-calls" class="table-wrap collapsed">
-    <table>
-      <thead>
-        <tr>
-          <th>Calls</th>
-          <th>Calls/hr</th>
-          <th>Total time</th>
-          <th>Mean time</th>
-          <th>Attention</th>
-          <th>Query</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{if .Res.Statements.TopByCalls}}
-        {{range $i, $q := .Res.Statements.TopByCalls}}
-        <tr class="{{if lt $i 3}}hot{{end}}">
-          <td class="nowrap">{{fmtF0 $q.Calls}}</td>
-          <td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td>
-          <td class="nowrap">{{fmtMs $q.TotalTime}}</td>
-          <td class="nowrap">{{fmtMs $q.MeanTime}}</td>
-          <td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span
-              class="muted">-</span>{{end}}</td>
-          <td>
-            <pre id="query-pre-calls-{{$i}}"
-              class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
-            {{if gt (len $q.Query) 200}}<button type="button" class="show-full" onclick="pg_toggleFull(this)"
-              data-target="#query-pre-calls-{{$i}}">Show full</button>{{end}}
-            {{if $q.Advice}}
-            <div class="plan-advice">
-              {{if $q.Advice.Highlights}}
-              <h4>Plan highlights</h4>
-              <ul>
-                {{range $q.Advice.Highlights}}<li>{{.}}</li>{{end}}
-              </ul>
-              {{end}}
-              {{if $q.Advice.Suggestions}}
-              <h4>Suggestions</h4>
-              <ul>
-                {{range $q.Advice.Suggestions}}<li>{{.}}</li>{{end}}
-              </ul>
-              {{end}}
-              {{if $q.Advice.Plan}}
-              <pre id="plan-pre-calls-{{$i}}" class="plan-pre" style="display:none">{{$q.Advice.Plan}}</pre>
-              <button type="button" class="show-plan" onclick="pg_togglePlan(this)" data-target="#plan-pre-calls-{{$i}}">Show plan</button>
-              {{end}}
-            </div>
-            {{end}}
-          </td>
-        </tr>
-        {{end}}
-        {{else}}
-        <tr>
-          <td colspan="6" class="muted">No data</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  {{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-queries-calls">Show all</button></div>{{end}}
   </div>
   {{end}}
-  {{else}}
-  <p>pg_stat_statements is not enabled in this database. Install and preload it for detailed query insights.</p>
+
+  {{if .Res.LockStats}}
+  <h2>Lock contention</h2>
+  <div id="table-locks" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Lock Type</th>
+          <th>Mode</th>
+          <th>Granted</th>
+          <th>Count</th>
+          <th>Waiting PIDs</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.LockStats}}
+        <tr>
+          <td>{{.LockType}}</td>
+          <td>{{.Mode}}</td>
+          <td>{{if .Granted}}Yes{{else}}No{{end}}</td>
+          <td>{{.Count}}</td>
+          <td>{{range .WaitingPIDs}}{{.}} {{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
   {{end}}
 
   <h2>Blocking queries</h2>
@@ -780,8 +621,7 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-blocking">Show all</button></div>{{end}}
+  {{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-blocking">Show all</button></div>{{end}}
   </div>
   <p class="section-note">{{.BlockingSummary}}</p>
 
@@ -815,8 +655,7 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-long-running">Show all</button></div>{{end}}
+  {{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-long-running">Show all</button></div>{{end}}
   </div>
   <p class="section-note">{{.LongRunningSummary}}</p>
 
@@ -850,232 +689,195 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-autovacuum">Show all</button></div>{{end}}
+  {{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-autovacuum">Show all</button></div>{{end}}
   </div>
   <p class="section-note">{{.AutovacSummary}}</p>
 
-  <h2>Settings (subset)</h2>
-  <div id="table-settings" class="table-wrap collapsed">
+  <!-- Storage & indexing -->
+  <h2>Top tables by rows</h2>
+  <div id="table-tables-by-rows" class="table-wrap collapsed">
     <table>
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Value</th>
-          <th>Unit</th>
-          <th>Source</th>
+          {{if .ShowDBTablesByRows}}<th>Database</th>{{end}}
+          <th>Schema</th>
+          <th>Table</th>
+          <th>Rows</th>
         </tr>
       </thead>
       <tbody>
-        {{if .Res.Settings}}
-        {{range .Res.Settings}}<tr>
-          <td>{{.Name}}</td>
-          <td>{{.Val}}</td>
-          <td>{{.Unit}}</td>
-          <td>{{.Source}}</td>
-        </tr>{{end}}
+        {{if .TablesByRows}}
+        {{range $i, $t := .TablesByRows}}{{if lt $i 100}}<tr>
+          {{if $.ShowDBTablesByRows}}<td>{{$t.Database}}</td>{{end}}
+          <td>{{$t.Schema}}</td>
+          <td>{{$t.Name}}</td>
+          <td>{{fmtI64 $t.NLiveTup}}</td>
+        </tr>{{end}}{{end}}
         {{else}}
         <tr>
-          <td colspan="4" class="muted">No data</td>
+          {{if .ShowDBTablesByRows}}<td colspan="4" class="muted">No data</td>{{else}}<td colspan="3" class="muted">No data</td>{{end}}
         </tr>
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)"
-    data-target="#table-settings">Show all</button></div>{{end}}
+  {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-tables-by-rows">Show all</button></div>{{end}}
   </div>
+  {{/* No explicit summary for this table to avoid noise */}}
 
-  <h2>Memory</h2>
-  <div id="table-memory" class="table-wrap">
+  <h2>Top tables by size</h2>
+  <div id="table-tables-by-size" class="table-wrap collapsed">
     <table>
       <thead>
         <tr>
-          <th>Metric</th>
-          <th>Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr><td>Block size</td><td>{{fmtBytes .Res.MemoryStats.BlockSizeBytes}}</td></tr>
-        <tr><td>shared_buffers (bytes)</td><td>{{fmtBytes .Res.MemoryStats.SharedBuffersBytes}}</td></tr>
-        <tr><td>shared_buffers (buffers)</td><td>{{fmtI64 .Res.MemoryStats.SharedBuffersSetting}}</td></tr>
-        {{if .Res.MemoryStats.BuffercacheAvailable}}
-        <tr><td>Buffers in use</td><td>{{fmtI64 .Res.MemoryStats.BuffercacheUsedBuffers}} ({{fmtBytes .Res.MemoryStats.BuffercacheUsedBytes}})</td></tr>
-        {{else}}
-        <tr><td>Buffers in use</td><td class="muted">pg_buffercache not installed</td></tr>
-        {{end}}
-        <tr><td>Temp files (current DB)</td><td>{{fmtI64 .Res.MemoryStats.TempFilesCurrentDB}}</td></tr>
-        <tr><td>Temp bytes (current DB)</td><td>{{fmtBytes .Res.MemoryStats.TempBytesCurrentDB}}</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  {{if .Res.ReplicationStats}}
-  <h2>Replication status</h2>
-  <div id="table-replication" class="table-wrap collapsed">
-    <table>
-      <thead>
-        <tr>
-          <th>Replica</th>
-          <th>State</th>
-          <th>Sync State</th>
-          <th>Priority</th>
-          <th>Write Lag</th>
-          <th>Flush Lag</th>
-          <th>Replay Lag</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{range .Res.ReplicationStats}}
-        <tr>
-          <td>{{.Name}}</td>
-          <td>{{.State}}</td>
-          <td>{{.SyncState}}</td>
-          <td>{{.SyncPriority}}</td>
-          <td>{{.WriteLag}}</td>
-          <td>{{.FlushLag}}</td>
-          <td>{{.ReplayLag}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div>
-  {{end}}
-
-  {{if .Res.LockStats}}
-  <h2>Lock contention</h2>
-  <div id="table-locks" class="table-wrap collapsed">
-    <table>
-      <thead>
-        <tr>
-          <th>Lock Type</th>
-          <th>Mode</th>
-          <th>Granted</th>
-          <th>Count</th>
-          <th>Waiting PIDs</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{range .Res.LockStats}}
-        <tr>
-          <td>{{.LockType}}</td>
-          <td>{{.Mode}}</td>
-          <td>{{if .Granted}}Yes{{else}}No{{end}}</td>
-          <td>{{.Count}}</td>
-          <td>{{range .WaitingPIDs}}{{.}} {{end}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div>
-  {{end}}
-
-  {{if .Res.TempFileStats}}
-  <h2>Temporary file usage</h2>
-  <div id="table-temp-files" class="table-wrap collapsed">
-    <table>
-      <thead>
-        <tr>
-          <th>Database</th>
-          <th>PID</th>
-          <th>Files</th>
+          {{if .ShowDBTablesBySize}}<th>Database</th>{{end}}
+          <th>Schema</th>
+          <th>Table</th>
           <th>Size</th>
         </tr>
       </thead>
       <tbody>
-        {{range .Res.TempFileStats}}
+        {{if .TablesBySize}}
+        {{range $i, $t := .TablesBySize}}{{if lt $i 100}}<tr>
+          {{if $.ShowDBTablesBySize}}<td>{{$t.Database}}</td>{{end}}
+          <td>{{$t.Schema}}</td>
+          <td>{{$t.Name}}</td>
+          <td>{{fmtBytes $t.SizeBytes}}</td>
+        </tr>{{end}}{{end}}
+        {{else}}
         <tr>
-          <td>{{.Datname}}</td>
-          <td>{{.PID}}</td>
-          <td>{{fmtI64 .Files}}</td>
+          {{if .ShowDBTablesBySize}}<td colspan="4" class="muted">No data</td>{{else}}<td colspan="3" class="muted">No data</td>{{end}}
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-tables-by-size">Show all</button></div>{{end}}
+  </div>
+  {{/* No explicit summary for this table to avoid noise */}}
+
+  <h2>Tables with lowest index usage</h2>
+  <div id="table-index-usage-low" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          {{if .ShowDBIndexUsageLow}}<th>Database</th>{{end}}
+          <th>Schema</th>
+          <th>Table</th>
+          <th>Index usage</th>
+          <th>Rows</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Res.IndexUsageLow}}
+        {{range .Res.IndexUsageLow}}<tr>
+          {{if $.ShowDBIndexUsageLow}}<td>{{.Database}}</td>{{end}}
+          <td>{{.Schema}}</td>
+          <td>{{.Table}}</td>
+          <td>{{fmtF2 .IndexUsagePct}}%</td>
+          <td>{{fmtI64 .Rows}}</td>
+        </tr>{{end}}
+        {{else}}
+        <tr>
+          {{if .ShowDBIndexUsageLow}}<td colspan="5" class="muted">No data</td>{{else}}<td colspan="4" class="muted">No data</td>{{end}}
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-index-usage-low">Show all</button></div>{{end}}
+  </div>
+  {{if .IndexUsageSummary}}<p class="section-note">{{.IndexUsageSummary}}</p>{{end}}
+
+  {{if .Res.IndexUnused}}
+  <h2>Unused indexes</h2>
+  <div id="table-index-unused" class="table-wrap{{if gt (len .Res.IndexUnused) 10}} collapsed{{end}}">
+    <table>
+      <thead>
+        <tr>
+          {{if .ShowDBIndexUnused}}<th>Database</th>{{end}}
+          <th>Schema</th>
+          <th>Table</th>
+          <th>Index</th>
+          <th>Size</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.IndexUnused}}<tr>
+          {{if $.ShowDBIndexUnused}}<td>{{.Database}}</td>{{end}}
+          <td>{{.Schema}}</td>
+          <td>{{.Table}}</td>
+          <td>{{.Name}}</td>
+          <td>{{fmtBytes .SizeBytes}} {{if gt .SizeBytes 104857600}}<span class="badge-attn">Large</span>{{end}}</td>
+        </tr>{{end}}
+      </tbody>
+    </table>
+  {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-index-unused">Show all</button></div>{{end}}
+  </div>
+  {{end}}
+  <p class="section-note">{{.IndexUnusedSummary}}</p>
+
+  <h2>Tables dead rows bloat</h2>
+  <div id="table-index-counts" class="table-wrap{{if gt (len .Res.TablesWithIndexCount) 10}} collapsed{{end}}">
+    <table>
+      <thead>
+        <tr>
+          {{if .ShowDBIndexCounts}}<th>Database</th>{{end}}
+          <th>Schema</th>
+          <th>Table</th>
+          <th>Index Count</th>
+          <th>Size</th>
+          <th>Rows</th>
+          <th>Dead rows</th>
+          <th>Bloat</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Res.TablesWithIndexCount}}
+        {{range .Res.TablesWithIndexCount}}
+        <tr{{if gt .BloatPct 20.0}} class="hot"{{end}}>
+          {{if $.ShowDBIndexCounts}}<td>{{.Database}}</td>{{end}}
+          <td>{{.Schema}}</td>
+          <td>{{.Name}}</td>
+          <td>{{.IndexCount}}</td>
+          <td>{{fmtBytes .SizeBytes}}</td>
+          <td>{{fmtThousands .RowCount}}</td>
+          <td>{{fmtThousands .DeadRows}}</td>
+          <td>{{fmtBytes (bloatBytes .SizeBytes .BloatPct)}} ({{printf "%.1f" .BloatPct}}%)</td>
+          </tr>
+          {{end}}
+          {{else}}
+          <tr>
+            {{if .ShowDBIndexCounts}}<td colspan="8" class="muted">No data</td>{{else}}<td colspan="7" class="muted">No data</td>{{end}}
+          </tr>
+          {{end}}
+      </tbody>
+    </table>
+  {{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-index-counts">Show all</button></div>{{end}}
+  </div>
+  {{if .BloatPctNote}}<p class="section-note">{{.BloatPctNote}}</p>{{end}}
+
+  {{if .ReclaimByDB}}
+  <h3>Reclaimable space by database (estimate)</h3>
+  <div id="table-reclaim-by-db" class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Database</th>
+          <th>Reclaimable (est.)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .ReclaimByDB}}
+        <tr>
+          <td>{{.Database}}</td>
           <td>{{fmtBytes .Bytes}}</td>
         </tr>
         {{end}}
       </tbody>
-    </table>
-  </div>
-  {{end}}
-
-  {{if .Res.ExtensionStats}}
-  <h2>Installed extensions</h2>
-  <div id="table-extensions" class="table-wrap collapsed">
-    <table>
-      <thead>
+      <tfoot>
         <tr>
-          {{/* Show Database column if entries come from multiple DBs */}}
-          {{- $showDB := false -}}
-          {{- if gt (len .Res.ExtensionStats) 0 -}}
-          {{- $first := (index .Res.ExtensionStats 0).Database -}}
-          {{- range .Res.ExtensionStats -}}
-          {{- if ne .Database $first -}}{{- $showDB = true -}}{{- end -}}
-          {{- end -}}
-          {{- end -}}
-          {{if $showDB}}<th>Database</th>{{end}}
-          <th>Name</th>
-          <th>Version</th>
-          <th>Description</th>
-          <th>Schema</th>
+          <th>Total</th>
+          <th>{{fmtBytes .ReclaimTotal}}</th>
         </tr>
-      </thead>
-      <tbody>
-        {{range .Res.ExtensionStats}}
-        <tr>
-          {{if $showDB}}<td>{{.Database}}</td>{{end}}
-          <td>{{.Name}}</td>
-          <td>{{.Version}}</td>
-          <td>{{.Description}}</td>
-          <td>{{.Schema}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div>
-  {{end}}
-
-  {{if .Res.WaitEvents}}
-  <h2>Wait events (top)</h2>
-  <div id="table-waits" class="table-wrap collapsed">
-    <table>
-      <thead>
-        <tr><th>Type</th><th>Event</th><th>Count</th></tr>
-      </thead>
-      <tbody>
-        {{range .Res.WaitEvents}}
-        <tr><td>{{.Type}}</td><td>{{.Event}}</td><td>{{.Count}}</td></tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div>
-  {{end}}
-
-  {{if .Res.FunctionStats}}
-  <h2>Top functions by total time</h2>
-  <div id="table-functions" class="table-wrap collapsed">
-    <table>
-      <thead>
-        <tr><th>Schema</th><th>Function</th><th>Calls</th><th>Total time</th><th>Self time</th></tr>
-      </thead>
-      <tbody>
-        {{range .Res.FunctionStats}}
-        <tr><td>{{.Schema}}</td><td>{{.Name}}</td><td>{{fmtI64 .Calls}}</td><td>{{fmtF2 .TotalTime}} ms</td><td>{{fmtF2 .SelfTime}} ms</td></tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div>
-  {{end}}
-
-  {{if .Res.WAL}}
-  <h2>WAL statistics</h2>
-  <div id="table-wal" class="table-wrap">
-    <table>
-      <thead>
-        <tr><th>Metric</th><th>Value</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>WAL records</td><td>{{fmtI64 .Res.WAL.Records}}</td></tr>
-        <tr><td>Full-page images</td><td>{{fmtI64 .Res.WAL.FullPage}}</td></tr>
-        <tr><td>WAL bytes</td><td>{{fmtBytes .Res.WAL.Bytes}}</td></tr>
-        <tr><td>Stats reset</td><td>{{fmtTime .Res.WAL.StatsReset}}</td></tr>
-      </tbody>
+      </tfoot>
     </table>
   </div>
   {{end}}
@@ -1117,6 +919,183 @@
           <td>{{.Relation}}</td>
           <td>{{.Phase}}</td>
           <td>{{fmtI64 .SampleScans}} / {{fmtI64 .SampleTotal}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  <!-- Query performance -->
+  {{if .Res.Extensions.PgStatStatements}}
+  {{if .Res.Statements.SkippedReason}}
+  <h2>Top queries</h2>
+  <p class="section-note">{{.Res.Statements.SkippedReason}}</p>
+  {{else}}
+  <h2>Top queries by total time</h2>
+  {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
+  <div id="table-queries-total-time" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Calls</th>
+          <th>Calls/hr</th>
+          <th>Total time</th>
+          <th>Mean time</th>
+          <th>Attention</th>
+          <th>Query</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Res.Statements.TopByTotalTime}}
+        {{range $i, $q := .Res.Statements.TopByTotalTime}}
+        <tr class="{{if lt $i 3}}hot{{end}}">
+          <td class="nowrap">{{fmtF0 $q.Calls}}</td>
+          <td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td>
+          <td class="nowrap">{{fmtMs $q.TotalTime}}</td>
+          <td class="nowrap">{{fmtMs $q.MeanTime}}</td>
+          <td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td>
+          <td>
+            <pre id="query-pre-total-{{$i}}" class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
+            {{if gt (len $q.Query) 200}}<button type="button" class="show-full" onclick="pg_toggleFull(this)" data-target="#query-pre-total-{{$i}}">Show full</button>{{end}}
+            {{if $q.Advice}}
+            <div class="plan-advice">
+              {{if $q.Advice.Highlights}}
+              <h4>Plan highlights</h4>
+              <ul>
+                {{range $q.Advice.Highlights}}<li>{{.}}</li>{{end}}
+              </ul>
+              {{end}}
+              {{if $q.Advice.Suggestions}}
+              <h4>Suggestions</h4>
+              <ul>
+                {{range $q.Advice.Suggestions}}<li>{{.}}</li>{{end}}
+              </ul>
+              {{end}}
+              {{if $q.Advice.Plan}}
+              <pre id="plan-pre-total-{{$i}}" class="plan-pre" style="display:none">{{$q.Advice.Plan}}</pre>
+              <button type="button" class="show-plan" onclick="pg_togglePlan(this)" data-target="#plan-pre-total-{{$i}}">Show plan</button>
+              {{end}}
+            </div>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+        {{else}}
+        <tr>
+          <td colspan="6" class="muted">No data</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-queries-total-time">Show all</button></div>{{end}}
+  </div>
+
+  <h2>Top queries by calls</h2>
+  {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
+  <div id="table-queries-calls" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Calls</th>
+          <th>Calls/hr</th>
+          <th>Total time</th>
+          <th>Mean time</th>
+          <th>Attention</th>
+          <th>Query</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Res.Statements.TopByCalls}}
+        {{range $i, $q := .Res.Statements.TopByCalls}}
+        <tr class="{{if lt $i 3}}hot{{end}}">
+          <td class="nowrap">{{fmtF0 $q.Calls}}</td>
+          <td class="nowrap">{{fmtF1 $q.CallsPerHour}}</td>
+          <td class="nowrap">{{fmtMs $q.TotalTime}}</td>
+          <td class="nowrap">{{fmtMs $q.MeanTime}}</td>
+          <td>{{if $q.NeedsAttention}}<span class="badge-attn">Needs attention</span>{{else}}<span class="muted">-</span>{{end}}</td>
+          <td>
+            <pre id="query-pre-calls-{{$i}}" class="query"><span class="query-short">{{printf "%.200s" $q.Query}}{{if gt (len $q.Query) 200}}...{{end}}</span><span class="query-full">{{$q.Query}}</span></pre>
+            {{if gt (len $q.Query) 200}}<button type="button" class="show-full" onclick="pg_toggleFull(this)" data-target="#query-pre-calls-{{$i}}">Show full</button>{{end}}
+            {{if $q.Advice}}
+            <div class="plan-advice">
+              {{if $q.Advice.Highlights}}
+              <h4>Plan highlights</h4>
+              <ul>
+                {{range $q.Advice.Highlights}}<li>{{.}}</li>{{end}}
+              </ul>
+              {{end}}
+              {{if $q.Advice.Suggestions}}
+              <h4>Suggestions</h4>
+              <ul>
+                {{range $q.Advice.Suggestions}}<li>{{.}}</li>{{end}}
+              </ul>
+              {{end}}
+              {{if $q.Advice.Plan}}
+              <pre id="plan-pre-calls-{{$i}}" class="plan-pre" style="display:none">{{$q.Advice.Plan}}</pre>
+              <button type="button" class="show-plan" onclick="pg_togglePlan(this)" data-target="#plan-pre-calls-{{$i}}">Show plan</button>
+              {{end}}
+            </div>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+        {{else}}
+        <tr>
+          <td colspan="6" class="muted">No data</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-queries-calls">Show all</button></div>{{end}}
+  </div>
+  {{end}}
+  {{else}}
+  <p>pg_stat_statements is not enabled in this database. Install and preload it for detailed query insights.</p>
+  {{end}}
+
+  {{if .Res.FunctionStats}}
+  <h2>Top functions by total time</h2>
+  <div id="table-functions" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr><th>Schema</th><th>Function</th><th>Calls</th><th>Total time</th><th>Self time</th></tr>
+      </thead>
+      <tbody>
+        {{range .Res.FunctionStats}}
+        <tr><td>{{.Schema}}</td><td>{{.Name}}</td><td>{{fmtI64 .Calls}}</td><td>{{fmtF2 .TotalTime}} ms</td><td>{{fmtF2 .SelfTime}} ms</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  <!-- Replication -->
+  {{if .Res.ReplicationStats}}
+  <h2>Replication status</h2>
+  <div id="table-replication" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Replica</th>
+          <th>State</th>
+          <th>Sync State</th>
+          <th>Priority</th>
+          <th>Write Lag</th>
+          <th>Flush Lag</th>
+          <th>Replay Lag</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.ReplicationStats}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td>{{.State}}</td>
+          <td>{{.SyncState}}</td>
+          <td>{{.SyncPriority}}</td>
+          <td>{{.WriteLag}}</td>
+          <td>{{.FlushLag}}</td>
+          <td>{{.ReplayLag}}</td>
         </tr>
         {{end}}
       </tbody>
