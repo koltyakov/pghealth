@@ -407,10 +407,100 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 			}
 			return template.HTMLEscapeString((func() string { return fmtFloatPrecSep(f, 2) + " " + units[i] })())
 		},
-		"fmtInt":       func(n int) string { return addThousands(strconv.FormatInt(int64(n), 10)) },
-		"fmtI64":       func(n int64) string { return addThousands(strconv.FormatInt(n, 10)) },
-		"fmtF0":        func(f float64) string { return fmtFloatPrecSep(f, 0) },
-		"fmtF1":        func(f float64) string { return fmtFloatPrecSep(f, 1) },
+		"fmtInt": func(n int) string { return addThousands(strconv.FormatInt(int64(n), 10)) },
+		"fmtI64": func(n int64) string { return addThousands(strconv.FormatInt(n, 10)) },
+		"fmtF0":  func(f float64) string { return fmtFloatPrecSep(f, 0) },
+		"fmtF1":  func(f float64) string { return fmtFloatPrecSep(f, 1) },
+		// Map analyzer finding to a section anchor if available. If the section
+		// isn’t rendered (no details), return empty so the card isn’t a link.
+		"findingAnchor": func(code, title string) string {
+			// Helpers for availability
+			hasWaits := len(res.WaitEvents) > 0
+			hasWal := res.WAL != nil
+			hasTemp := len(res.TempFileStats) > 0
+			hasExtList := len(res.ExtensionStats) > 0
+			hasFuncs := len(res.FunctionStats) > 0
+			hasCI := len(res.ProgressCreateIndex) > 0
+			hasPSSLists := res.Extensions.PgStatStatements && res.Statements.SkippedReason == ""
+			hasUnusedIdx := len(res.IndexUnused) > 0
+			hasRepl := len(res.ReplicationStats) > 0
+
+			switch code {
+			case "io-waits", "lock-waits", "bufferpin-waits":
+				if hasWaits {
+					return "#hdr-waits"
+				}
+				return ""
+			case "high-wal", "wal-fpi", "wal-fpi-high":
+				if hasWal {
+					return "#hdr-wal"
+				}
+				return ""
+			case "unused-indexes":
+				if hasUnusedIdx {
+					return "#hdr-index-unused"
+				}
+				return ""
+			case "too-many-indexes", "table-bloat-heuristic":
+				return "#hdr-index-counts"
+			case "missing-indexes":
+				return "#hdr-index-usage-low"
+			case "slow-index-improve", "slow-refactor", "slow-sorts", "slow-joins", "slow-seq-scans":
+				if hasPSSLists {
+					return "#hdr-queries-total-time"
+				}
+				return ""
+			case "long-running":
+				return "#hdr-long-running"
+			case "ci-wait-lockers":
+				if hasCI {
+					return "#hdr-progress-ci"
+				}
+				return ""
+			case "hot-function", "hot-functions-multi":
+				if hasFuncs {
+					return "#hdr-functions"
+				}
+				return ""
+			case "install-pgss":
+				return "#hdr-settings"
+			case "missing-extensions":
+				if hasExtList {
+					return "#hdr-extensions"
+				}
+				return ""
+			case "enable-track-io", "wal-level-minimal", "checkpoint-timeout-low", "ecs-low-vs-sb", "high-max-connections", "autovacuum-naptime-high", "maintenance-work-mem-low", "random-page-cost-default", "no-statement-timeout", "no-idle-tx-timeout", "ssl-off":
+				return "#hdr-settings"
+			case "cache-overall":
+				return "#hdr-cache-hit"
+			}
+			// Fallback by keywords in title when code missing
+			lt := strings.ToLower(title)
+			switch {
+			case strings.Contains(lt, "wait"):
+				if hasWaits {
+					return "#hdr-waits"
+				}
+				return ""
+			case strings.Contains(lt, "block"):
+				return "#hdr-blocking" // always present
+			case strings.Contains(lt, "autovac"):
+				return "#hdr-autovacuum" // always present
+			case strings.Contains(lt, "replication"):
+				if hasRepl {
+					return "#hdr-replication"
+				}
+				return ""
+			case strings.Contains(lt, "temp"):
+				if hasTemp {
+					return "#hdr-temp-files"
+				}
+				return ""
+			case strings.Contains(lt, "cache hit"):
+				return "#hdr-cache-hit" // always present
+			}
+			return ""
+		},
 		"fmtF2":        func(f float64) string { return fmtFloatPrecSep(f, 2) },
 		"fmtThousands": func(n int64) string { return addThousands(strconv.FormatInt(n, 10)) },
 		// bloatBytes estimates wasted bytes from size and percent

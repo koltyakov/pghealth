@@ -263,27 +263,30 @@
 
   <section class="grid">
     {{range .A.Warnings}}
-    <div class="card warn"><strong>{{.Title}}</strong>
+  {{ $href := findingAnchor .Code .Title }}
+  <div class="card warn">{{if $href}}<a href="{{$href}}" style="text-decoration:none;color:inherit">{{end}}<strong>{{.Title}}</strong>
       <div>{{.Description}}</div>
       <div><small>{{.Action}}</small></div>
-    </div>
+  {{if $href}}</a>{{end}}</div>
     {{end}}
     {{range .A.Recommendations}}
-    <div class="card rec"><strong>{{.Title}}</strong>
+  {{ $href := findingAnchor .Code .Title }}
+  <div class="card rec">{{if $href}}<a href="{{$href}}" style="text-decoration:none;color:inherit">{{end}}<strong>{{.Title}}</strong>
       <div>{{.Description}}</div>
       <div><small>{{.Action}}</small></div>
-    </div>
+  {{if $href}}</a>{{end}}</div>
     {{end}}
     {{range .A.Infos}}
-    <div class="card info"><strong>{{.Title}}</strong>
+  {{ $href := findingAnchor .Code .Title }}
+  <div class="card info">{{if $href}}<a href="{{$href}}" style="text-decoration:none;color:inherit">{{end}}<strong>{{.Title}}</strong>
       <div>{{.Description}}</div>
       <div><small>{{.Action}}</small></div>
-    </div>
+  {{if $href}}</a>{{end}}</div>
     {{end}}
   </section>
 
   <!-- System & configuration -->
-  <h2>Databases</h2>
+  <h2 id="hdr-databases">Databases</h2>
   <div id="table-databases" class="table-wrap collapsed">
     <table>
       <thead>
@@ -309,11 +312,11 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-databases">Show all</button></div>{{end}}
+  {{if gt (len .Res.DBs) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-databases" data-header="#hdr-databases">Show all</button></div>{{end}}
   </div>
   {{if .DBsSummary}}<p class="section-note">{{.DBsSummary}}</p>{{end}}
 
-  <h2>Connections</h2>
+  <h2 id="hdr-connections">Connections</h2>
   <div id="table-connections" class="table-wrap collapsed">
     <table>
       <thead>
@@ -337,11 +340,11 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Activity) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-connections">Show all</button></div>{{end}}
+  {{if gt (len .Activity) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-connections" data-header="#hdr-connections">Show all</button></div>{{end}}
   </div>
   {{if .ConnSummary}}<p class="section-note">{{.ConnSummary}}</p>{{end}}
 
-  <h3>Connections by client</h3>
+  <h3 id="hdr-connections-clients">Connections by client</h3>
   <div id="table-clients" class="table-wrap collapsed">
     <table>
       <thead>
@@ -371,11 +374,11 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-clients">Show all</button></div>{{end}}
+  {{if gt (len .Res.ConnectionsByClient) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-clients" data-header="#hdr-connections-clients">Show all</button></div>{{end}}
   </div>
   {{if .ClientsSummary}}<p class="section-note">{{.ClientsSummary}}</p>{{end}}
 
-  <h2>Settings (subset)</h2>
+  <h2 id="hdr-settings">Settings (subset)</h2>
   <div id="table-settings" class="table-wrap collapsed">
     <table>
       <thead>
@@ -401,11 +404,11 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-settings">Show all</button></div>{{end}}
+  {{if gt (len .Res.Settings) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-settings" data-header="#hdr-settings">Show all</button></div>{{end}}
   </div>
 
   {{if .Res.ExtensionStats}}
-  <h2>Installed extensions</h2>
+  <h2 id="hdr-extensions">Installed extensions</h2>
   <div id="table-extensions" class="table-wrap collapsed">
     <table>
       <thead>
@@ -441,7 +444,7 @@
   {{end}}
 
   <!-- Resource & I/O -->
-  <h2>Memory</h2>
+  <h2 id="hdr-memory">Memory</h2>
   <div id="table-memory" class="table-wrap">
     <table>
       <thead>
@@ -471,7 +474,7 @@
     If shared_buffers is small vs working set, cache hit ratios may drop; if it's very large, ensure checkpoint/IO
     settings are tuned to avoid long stalls.</p>
 
-  <h2>Cache hit ratio by database</h2>
+  <h2 id="hdr-cache-hit">Cache hit ratio by database</h2>
   <p class="muted">Interpretation: closer to 100% is better. Values above ~99% are typical for OLTP workloads. Lower
     ratios indicate more disk reads; consider increasing shared_buffers, reviewing working set size, and improving
     indexing and query plans.</p>
@@ -500,12 +503,12 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-cache-hit">Show all</button></div>{{end}}
+  {{if gt (len .Res.CacheHits) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-cache-hit" data-header="#hdr-cache-hit">Show all</button></div>{{end}}
   </div>
   {{if .CacheHitsSummary}}<p class="section-note">{{.CacheHitsSummary}}</p>{{end}}
 
   {{if .Res.WAL}}
-  <h2>WAL statistics</h2>
+  <h2 id="hdr-wal">WAL statistics</h2>
   <div id="table-wal" class="table-wrap">
     <table>
       <thead>
@@ -525,7 +528,7 @@
     max_wal_size, autovacuum settings, and reducing unnecessary bulk updates. Fewer checkpoints often reduce FPI rate.</p>{{end}}
 
   {{if .Res.TempFileStats}}
-  <h2>Temporary file usage</h2>
+  <h2 id="hdr-temp-files">Temporary file usage</h2>
   <div id="table-temp-files" class="table-wrap collapsed">
     <table>
       <thead>
@@ -549,6 +552,7 @@
     </table>
   </div>
   {{end}}
+  {{if .Res.TempFileStats}}{{if gt (len .Res.TempFileStats) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-temp-files" data-header="#hdr-temp-files">Show all</button></div>{{end}}{{end}}
   {{if .Res.WaitEvents}}<p class="section-note">Interpretation: IO-related waits point to storage pressure; review cache hit,
     shared_buffers, effective_io_concurrency, and query/index design. Lock waits usually indicate long transactions or
     hot rows; use the Blocking and Long running sections to find blockers, shorten transactions, add missing indexes,
@@ -556,7 +560,7 @@
 
   <!-- Concurrency & waits -->
   {{if .Res.WaitEvents}}
-  <h2>Wait events (top)</h2>
+  <h2 id="hdr-waits">Wait events (top)</h2>
   <div id="table-waits" class="table-wrap collapsed">
     <table>
       <thead>
@@ -569,11 +573,12 @@
       </tbody>
     </table>
   </div>
+  {{if gt (len .Res.WaitEvents) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-waits" data-header="#hdr-waits">Show all</button></div>{{end}}
   {{if .WaitsSummary}}<p class="section-note">{{.WaitsSummary}}</p>{{end}}
   {{end}}
 
   {{if .Res.LockStats}}
-  <h2>Lock contention</h2>
+  <h2 id="hdr-locks">Lock contention</h2>
   <div id="table-locks" class="table-wrap collapsed">
     <table>
       <thead>
@@ -598,9 +603,10 @@
       </tbody>
     </table>
   </div>
+  {{if gt (len .Res.LockStats) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-locks" data-header="#hdr-locks">Show all</button></div>{{end}}
   {{end}}
 
-  <h2>Blocking queries</h2>
+  <h2 id="hdr-blocking">Blocking queries</h2>
   <div id="table-blocking" class="table-wrap collapsed">
     <table>
       <thead>
@@ -636,11 +642,11 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-blocking">Show all</button></div>{{end}}
+  {{if gt (len .Res.Blocking) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-blocking" data-header="#hdr-blocking">Show all</button></div>{{end}}
   </div>
   <p class="section-note">{{.BlockingSummary}}</p>
 
-  <h2>Long running queries (> 5m)</h2>
+  <h2 id="hdr-long-running">Long running queries (> 5m)</h2>
   <div id="table-long-running" class="table-wrap collapsed">
     <table>
       <thead>
@@ -670,11 +676,11 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-long-running">Show all</button></div>{{end}}
+  {{if gt (len .Res.LongRunning) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-long-running" data-header="#hdr-long-running">Show all</button></div>{{end}}
   </div>
   <p class="section-note">{{.LongRunningSummary}}</p>
 
-  <h2>Autovacuum activities</h2>
+  <h2 id="hdr-autovacuum">Autovacuum activities</h2>
   <div id="table-autovacuum" class="table-wrap collapsed">
     <table>
       <thead>
@@ -704,12 +710,12 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-autovacuum">Show all</button></div>{{end}}
+  {{if gt (len .Res.AutoVacuum) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-autovacuum" data-header="#hdr-autovacuum">Show all</button></div>{{end}}
   </div>
   <p class="section-note">{{.AutovacSummary}}</p>
 
   <!-- Storage & indexing -->
-  <h2>Top tables by rows</h2>
+  <h2 id="hdr-tables-by-rows">Top tables by rows</h2>
   <div id="table-tables-by-rows" class="table-wrap collapsed">
     <table>
       <thead>
@@ -735,11 +741,11 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-tables-by-rows">Show all</button></div>{{end}}
+  {{if gt (len .TablesByRows) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-tables-by-rows" data-header="#hdr-tables-by-rows">Show all</button></div>{{end}}
   </div>
   {{/* No explicit summary for this table to avoid noise */}}
 
-  <h2>Top tables by size</h2>
+  <h2 id="hdr-tables-by-size">Top tables by size</h2>
   <div id="table-tables-by-size" class="table-wrap collapsed">
     <table>
       <thead>
@@ -765,11 +771,11 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-tables-by-size">Show all</button></div>{{end}}
+  {{if gt (len .TablesBySize) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-tables-by-size" data-header="#hdr-tables-by-size">Show all</button></div>{{end}}
   </div>
   {{/* No explicit summary for this table to avoid noise */}}
 
-  <h2>Tables with lowest index usage</h2>
+  <h2 id="hdr-index-usage-low">Tables with lowest index usage</h2>
   <div id="table-index-usage-low" class="table-wrap collapsed">
     <table>
       <thead>
@@ -797,12 +803,12 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-index-usage-low">Show all</button></div>{{end}}
+  {{if gt (len .Res.IndexUsageLow) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-index-usage-low" data-header="#hdr-index-usage-low">Show all</button></div>{{end}}
   </div>
   {{if .IndexUsageSummary}}<p class="section-note">{{.IndexUsageSummary}}</p>{{end}}
 
   {{if .Res.IndexUnused}}
-  <h2>Unused indexes</h2>
+  <h2 id="hdr-index-unused">Unused indexes</h2>
   <div id="table-index-unused" class="table-wrap{{if gt (len .Res.IndexUnused) 10}} collapsed{{end}}">
     <table>
       <thead>
@@ -824,12 +830,12 @@
         </tr>{{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-index-unused">Show all</button></div>{{end}}
+  {{if gt (len .Res.IndexUnused) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-index-unused" data-header="#hdr-index-unused">Show all</button></div>{{end}}
   </div>
   {{end}}
   <p class="section-note">{{.IndexUnusedSummary}}</p>
 
-  <h2>Tables dead rows bloat</h2>
+  <h2 id="hdr-index-counts">Tables dead rows bloat</h2>
   <div id="table-index-counts" class="table-wrap{{if gt (len .Res.TablesWithIndexCount) 10}} collapsed{{end}}">
     <table>
       <thead>
@@ -865,12 +871,12 @@
           {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-index-counts">Show all</button></div>{{end}}
+  {{if gt (len .Res.TablesWithIndexCount) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-index-counts" data-header="#hdr-index-counts">Show all</button></div>{{end}}
   </div>
   {{if .BloatPctNote}}<p class="section-note">{{.BloatPctNote}}</p>{{end}}
 
   {{if .ReclaimByDB}}
-  <h3>Reclaimable space by database (estimate)</h3>
+  <h3 id="hdr-reclaim-by-db">Reclaimable space by database (estimate)</h3>
   <div id="table-reclaim-by-db" class="table-wrap">
     <table>
       <thead>
@@ -898,7 +904,7 @@
   {{end}}
 
   {{if .Res.ProgressCreateIndex}}
-  <h2>Index creation progress</h2>
+  <h2 id="hdr-progress-ci">Index creation progress</h2>
   <div id="table-progress-ci" class="table-wrap">
     <table>
       <thead>
@@ -918,10 +924,11 @@
       </tbody>
     </table>
   </div>
+  {{if gt (len .Res.ProgressCreateIndex) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-progress-ci" data-header="#hdr-progress-ci">Show all</button></div>{{end}}
   {{end}}
 
   {{if .Res.ProgressAnalyze}}
-  <h2>Analyze progress</h2>
+  <h2 id="hdr-progress-analyze">Analyze progress</h2>
   <div id="table-progress-analyze" class="table-wrap">
     <table>
       <thead>
@@ -939,15 +946,16 @@
       </tbody>
     </table>
   </div>
+  {{if gt (len .Res.ProgressAnalyze) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-progress-analyze" data-header="#hdr-progress-analyze">Show all</button></div>{{end}}
   {{end}}
 
   <!-- Query performance -->
   {{if .Res.Extensions.PgStatStatements}}
   {{if .Res.Statements.SkippedReason}}
-  <h2>Top queries</h2>
+  <h2 id="hdr-queries">Top queries</h2>
   <p class="section-note">{{.Res.Statements.SkippedReason}}</p>
   {{else}}
-  <h2>Top queries by total time</h2>
+  <h2 id="hdr-queries-total-time">Top queries by total time</h2>
   {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
   <div id="table-queries-total-time" class="table-wrap collapsed">
     <table>
@@ -1003,10 +1011,10 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-queries-total-time">Show all</button></div>{{end}}
+  {{if gt (len .Res.Statements.TopByTotalTime) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-queries-total-time" data-header="#hdr-queries-total-time">Show all</button></div>{{end}}
   </div>
 
-  <h2>Top queries by calls</h2>
+  <h2 id="hdr-queries-calls">Top queries by calls</h2>
   {{if .Res.Statements.StatsDuration}}<p class="section-note">Data from pg_stat_statements, covering the last {{fmtDur .Res.Statements.StatsDuration}} (since {{fmtTime .Res.Statements.StatsResetTime}}).</p>{{end}}
   <div id="table-queries-calls" class="table-wrap collapsed">
     <table>
@@ -1062,7 +1070,7 @@
         {{end}}
       </tbody>
     </table>
-  {{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-queries-calls">Show all</button></div>{{end}}
+  {{if gt (len .Res.Statements.TopByCalls) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-queries-calls" data-header="#hdr-queries-calls">Show all</button></div>{{end}}
   </div>
   {{end}}
   {{else}}
@@ -1070,7 +1078,7 @@
   {{end}}
 
   {{if .Res.FunctionStats}}
-  <h2>Top functions by total time</h2>
+  <h2 id="hdr-functions">Top functions by total time</h2>
   <div id="table-functions" class="table-wrap collapsed">
     <table>
       <thead>
@@ -1083,11 +1091,12 @@
       </tbody>
     </table>
   </div>
+  {{if gt (len .Res.FunctionStats) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-functions" data-header="#hdr-functions">Show all</button></div>{{end}}
   {{end}}
 
   <!-- Replication -->
   {{if .Res.ReplicationStats}}
-  <h2>Replication status</h2>
+  <h2 id="hdr-replication">Replication status</h2>
   <div id="table-replication" class="table-wrap collapsed">
     <table>
       <thead>
@@ -1116,6 +1125,7 @@
       </tbody>
     </table>
   </div>
+  {{if gt (len .Res.ReplicationStats) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-replication" data-header="#hdr-replication">Show all</button></div>{{end}}
   {{end}}
 
   <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime
@@ -1127,6 +1137,8 @@
       if (!sel) return false;
       var el = document.querySelector(sel);
       if (!el) return false;
+      var hdrSel = btn.getAttribute('data-header');
+      var hdr = hdrSel ? document.querySelector(hdrSel) : null;
       var willCollapse = !el.classList.contains('collapsed');
       if (el.classList.contains('collapsed')) {
         el.classList.remove('collapsed');
@@ -1138,10 +1150,11 @@
       // If we just collapsed, scroll back to the top of the table container
       if (willCollapse) {
         // Prefer native scrollIntoView if available
-        if (typeof el.scrollIntoView === 'function') {
-          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        var target = hdr || el;
+        if (typeof target.scrollIntoView === 'function') {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
         } else {
-          var top = (el.getBoundingClientRect ? el.getBoundingClientRect().top : 0) + (window.pageYOffset || document.documentElement.scrollTop || 0);
+          var top = ((hdr || el).getBoundingClientRect ? (hdr || el).getBoundingClientRect().top : 0) + (window.pageYOffset || document.documentElement.scrollTop || 0);
           try { window.scrollTo({ top: top, behavior: 'smooth' }); } catch (e) { window.scrollTo(0, top); }
         }
       }
