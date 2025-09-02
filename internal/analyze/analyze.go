@@ -7,6 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+
 	"github.com/koltyakov/pghealth/internal/collect"
 )
 
@@ -584,42 +587,213 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
-	// Wait events overview
+	// Wait events overview & heuristics (pg_monitor)
 	if len(res.WaitEvents) > 0 {
-		// Highlight if many LWLock/IO waits
-		ioWait := 0
-		lockWait := 0
+		total := 0
+		byType := map[string]int{}
+		byEvent := map[string]int{}
 		for _, w := range res.WaitEvents {
-			if strings.EqualFold(w.Type, "IO") {
-				ioWait += w.Count
+			total += w.Count
+			t := strings.ToUpper(strings.TrimSpace(w.Type))
+			e := strings.ToUpper(strings.TrimSpace(w.Event))
+			byType[t] += w.Count
+			byEvent[e] += w.Count
+		}
+		// Helper: top-N from a map
+		type kv struct {
+			k string
+			v int
+		}
+		topN := func(m map[string]int, n int) []kv {
+			arr := make([]kv, 0, len(m))
+			for k, v := range m {
+				arr = append(arr, kv{k, v})
 			}
-			if strings.Contains(strings.ToUpper(w.Type), "LWLOCK") || strings.Contains(strings.ToUpper(w.Event), "LOCK") {
-				lockWait += w.Count
+			sort.Slice(arr, func(i, j int) bool { return arr[i].v > arr[j].v })
+			if len(arr) > n {
+				arr = arr[:n]
+			}
+			return arr
+		}
+		topsType := topN(byType, 3)
+		topsEvent := topN(byEvent, 3)
+		// Compose summary info
+		if total > 0 {
+			parts := []string{}
+			for _, t := range topsType {
+				pct := float64(t.v) / float64(total) * 100
+				parts = append(parts, fmt.Sprintf("%s %.0f%%", titleCase(t.k), pct))
+			}
+			evs := []string{}
+			for _, e := range topsEvent {
+				evs = append(evs, titleCase(e.k))
+			}
+			a.Infos = append(a.Infos, Finding{
+				Title:       "Top wait types",
+				Severity:    "info",
+				Description: fmt.Sprintf("%s; top events: %s", strings.Join(parts, ", "), strings.Join(evs, ", ")),
+				Action:      "Use this to guide whether to focus on IO, locks, or application behavior.",
+			})
+		}
+		// Targeted recommendations based on dominant waits
+		get := func(key string) int { return byType[strings.ToUpper(key)] }
+		dom := func(key string) bool { return total > 0 && float64(get(key))/float64(total) >= 0.6 }
+		// IO waits
+		if get("IO") > 0 {
+			sev := "rec"
+			if dom("IO") {
+				sev = "warn"
+			}
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "IO-related waits",
+				Severity:    sev,
+				Code:        "io-waits",
+				Description: "pg_stat_activity shows IO waits (reads/writes/sync).",
+				Action:      "Improve cache hit (shared_buffers, indexing), tune effective_io_concurrency and checkpoint settings, and consider faster storage.",
+			})
+		}
+		// Lock and LWLock waits
+		lw := get("LWLOCK")
+		lk := get("LOCK")
+		if lw+lk > 0 {
+			sev := "rec"
+			if dom("LOCK") || dom("LWLOCK") {
+				sev = "warn"
+			}
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "Lock contention waits",
+				Severity:    sev,
+				Code:        "lock-waits",
+				Description: "Waits due to locks/LWLocks detected; possible blockers or high contention.",
+				Action:      "Identify blockers (Blocking section), shorten transactions, add indexes to reduce lock duration, and consider lock timeouts.",
+			})
+		}
+		// BufferPin waits (often long-running transactions pin buffers)
+		if get("BUFFERPIN") > 0 {
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Buffer pin waits",
+				Severity:    "rec",
+				Code:        "bufferpin-waits",
+				Description: "BufferPin waits suggest pinned buffers—often due to long-running queries/transactions.",
+				Action:      "Avoid long transactions and idle-in-transaction sessions; commit sooner and set idle_in_transaction_session_timeout.",
+			})
+		}
+		// Client waits: usually benign, but high proportions can indicate app idling
+		if dom("CLIENT") {
+			a.Infos = append(a.Infos, Finding{
+				Title:       "Client-side waits dominate",
+				Severity:    "info",
+				Description: "Many sessions are waiting on client reads/writes (often benign).",
+				Action:      "Validate application behavior and connection pooling settings.",
+			})
+		}
+		// Activity/Extension/IPС/Timeout etc. could be surfaced later if needed
+	}
+
+	// WAL volume context & FPI ratio (pg_monitor)
+	if res.WAL != nil && res.WAL.Bytes > 0 && !res.WAL.StatsReset.IsZero() {
+		dur := time.Since(res.WAL.StatsReset)
+		if dur > 0 {
+			bytesPerSec := float64(res.WAL.Bytes) / dur.Seconds()
+			// High sustained WAL write rate
+			if bytesPerSec > 10*1024*1024 { // >10MB/s
+				a.Warnings = append(a.Warnings, Finding{Title: "High WAL write rate", Severity: "warn", Code: "high-wal",
+					Description: fmt.Sprintf("~%.1f MB/s since %s", bytesPerSec/(1024*1024), formatLocalTime(res.WAL.StatsReset)),
+					Action:      "Tune checkpoint_timeout and max_wal_size; avoid unnecessary bulk updates and bloated indexes; ensure autovacuum keeps up.",
+				})
+			} else {
+				a.Infos = append(a.Infos, Finding{Title: "WAL rate", Severity: "info",
+					Description: fmt.Sprintf("~%.1f MB/s since %s", bytesPerSec/(1024*1024), formatLocalTime(res.WAL.StatsReset))})
 			}
 		}
-		if ioWait > 0 {
-			a.Recommendations = append(a.Recommendations, Finding{Title: "Significant IO waits", Severity: "rec", Code: "io-waits",
-				Description: "pg_stat_activity shows IO-related wait events; workload may be IO-bound.",
-				Action:      "Increase memory for caching, optimize queries and indexes to reduce IO, and consider faster storage."})
-		}
-		if lockWait > 0 {
-			a.Warnings = append(a.Warnings, Finding{Title: "Lock-related waits observed", Severity: "warn", Code: "lock-waits",
-				Description: "Wait events include locks/LWLocks; investigate blockers and long transactions.",
-				Action:      "Use blocking section, add indexes to reduce lock durations, and set timeouts."})
+		if res.WAL.Records > 0 {
+			fpiRatio := float64(res.WAL.FullPage) / float64(res.WAL.Records)
+			if fpiRatio > 0.5 {
+				a.Warnings = append(a.Warnings, Finding{
+					Title:       "Very high full-page image rate",
+					Severity:    "warn",
+					Code:        "wal-fpi-high",
+					Description: fmt.Sprintf("FPI/records ratio ~%.0f%%", fpiRatio*100),
+					Action:      "Likely frequent checkpoints or many first-touches of pages. Increase checkpoint_timeout/max_wal_size and avoid unnecessary table rewrites.",
+				})
+			} else if fpiRatio > 0.2 {
+				a.Recommendations = append(a.Recommendations, Finding{
+					Title:       "High full-page image rate",
+					Severity:    "rec",
+					Code:        "wal-fpi",
+					Description: fmt.Sprintf("FPI/records ratio ~%.0f%%", fpiRatio*100),
+					Action:      "Consider fewer checkpoints (tune checkpoint_timeout, max_wal_size) and reduce bulk page modifications where possible.",
+				})
+			}
 		}
 	}
 
-	// WAL volume context
-	if res.WAL != nil && res.WAL.Bytes > 0 && !res.Statements.StatsResetTime.IsZero() {
-		dur := time.Since(res.WAL.StatsReset)
-		if dur > 0 {
-			ratio := float64(res.WAL.Bytes) / dur.Seconds()
-			if ratio > 10*1024*1024 { // >10MB/s
-				a.Warnings = append(a.Warnings, Finding{Title: "High WAL write rate", Severity: "warn", Code: "high-wal",
-					Description: fmt.Sprintf("~%.1f MB/s since %s", ratio/(1024*1024), formatLocalTime(res.WAL.StatsReset)),
-					Action:      "Tune checkpoint settings (max_wal_size, checkpoint_timeout), reduce unnecessary churn (hot updates, indexes), and review autovacuum settings."})
+	// Functions hotspot analysis (pg_monitor)
+	if len(res.FunctionStats) > 0 {
+		// Top function emphasis
+		f := res.FunctionStats[0]
+		avgSelf := 0.0
+		if f.Calls > 0 {
+			avgSelf = f.SelfTime / float64(f.Calls)
+		}
+		// Heuristics: flag high total and notable self-time per call
+		if f.TotalTime > 15000 && f.Calls > 100 { // >15s total across >100 calls
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Hot function by total time",
+				Severity:    "rec",
+				Code:        "hot-function",
+				Description: fmt.Sprintf("%s.%s — calls: %s, total: %.1f ms, self: %.1f ms (avg self %.2f ms)", f.Schema, f.Name, formatThousands0(float64(f.Calls)), f.TotalTime, f.SelfTime, avgSelf),
+				Action:      "Profile function logic; reduce loops and per-row work; consider set-based SQL or indexing; enable track_functions='pl'/'all' if more granularity is needed.",
+			})
+		} else {
+			a.Infos = append(a.Infos, Finding{Title: "Top function", Severity: "info",
+				Description: fmt.Sprintf("%s.%s — total: %.1f ms, calls: %s", f.Schema, f.Name, f.TotalTime, formatThousands0(float64(f.Calls)))})
+		}
+		// Multiple heavy functions (avg self time threshold)
+		heavy := 0
+		for _, fn := range res.FunctionStats {
+			if fn.Calls >= 100 && (fn.SelfTime/float64(fn.Calls)) > 5.0 { // >5ms self per call
+				heavy++
 			}
 		}
+		if heavy >= 3 {
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Several functions show high per-call CPU time",
+				Severity:    "rec",
+				Code:        "hot-functions-multi",
+				Description: fmt.Sprintf("%d functions exceed ~5ms self time per call (>=100 calls)", heavy),
+				Action:      "Look for row-by-row PL/pgSQL patterns; push work into SQL set operations; add indexes to speed lookups inside functions.",
+			})
+		}
+	}
+
+	// Progress views (pg_monitor): detect waits during index builds/analyze
+	if len(res.ProgressCreateIndex) > 0 {
+		waiting := 0
+		for _, pr := range res.ProgressCreateIndex {
+			if strings.Contains(strings.ToLower(pr.Phase), "wait") || (pr.LockersTotal > 0 && pr.LockersDone < pr.LockersTotal) {
+				waiting++
+			}
+		}
+		if waiting > 0 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "Index builds waiting for lockers",
+				Severity:    "warn",
+				Code:        "ci-wait-lockers",
+				Description: fmt.Sprintf("%d CREATE INDEX operations are waiting on locks", waiting),
+				Action:      "Prefer CREATE INDEX CONCURRENTLY for live systems; schedule builds off-peak; reduce long transactions holding locks.",
+			})
+		} else {
+			a.Infos = append(a.Infos, Finding{Title: "Index builds in progress", Severity: "info",
+				Description: fmt.Sprintf("%d CREATE INDEX operations running", len(res.ProgressCreateIndex)),
+			})
+		}
+	}
+	if len(res.ProgressAnalyze) > 0 {
+		a.Infos = append(a.Infos, Finding{Title: "ANALYZE in progress", Severity: "info",
+			Description: fmt.Sprintf("%d relations being analyzed", len(res.ProgressAnalyze)),
+			Action:      "Allow ANALYZE to complete for up-to-date planner statistics.",
+		})
 	}
 
 	// Lock contention analysis
@@ -903,6 +1077,10 @@ func formatLocalTime(t time.Time) string {
 		return "n/a"
 	}
 	return t.Local().Format("2006-01-02 15:04:05 MST")
+}
+
+func titleCase(s string) string {
+	return cases.Title(language.English).String(strings.ToLower(s))
 }
 
 func formatThousands0(f float64) string {
