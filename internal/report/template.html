@@ -182,6 +182,7 @@
       padding: 8px;
       border: 1px solid #e5e7eb;
       background: #f9fafb;
+      font-size: 12px;
     }
 
     .plan-advice h4 {
@@ -463,6 +464,12 @@
       </tbody>
     </table>
   </div>
+  <p class="section-note">Note: Temp files and temp bytes are cumulative since statistics were last reset (often since
+    server start) and do not represent the current on-disk temporary space usage.</p>
+  <p class="section-note">Interpretation: High temp file churn usually means sorts/hashes spilling to disk; consider
+    raising work_mem for the troublesome queries (not globally), improving indexes/filters, or reducing row width.
+    If shared_buffers is small vs working set, cache hit ratios may drop; if it's very large, ensure checkpoint/IO
+    settings are tuned to avoid long stalls.</p>
 
   <h2>Cache hit ratio by database</h2>
   <p class="muted">Interpretation: closer to 100% is better. Values above ~99% are typical for OLTP workloads. Lower
@@ -479,7 +486,7 @@
         </tr>
       </thead>
       <tbody>
-  {{if .Res.CacheHits}}
+        {{if .Res.CacheHits}}
         {{range .Res.CacheHits}}{{if gt (add .BlksHit .BlksRead) 0}}<tr>
           <td>{{.Datname}}</td>
           <td>{{fmtI64 .BlksHit}}</td>
@@ -513,6 +520,9 @@
     </table>
   </div>
   {{end}}
+  {{if .Res.WAL}}<p class="section-note">Interpretation: WAL metrics are since last stats reset. Many full-page images and
+    high WAL bytes/hour suggest frequent checkpoints or heavy write activity. Consider tuning checkpoint_timeout,
+    max_wal_size, autovacuum settings, and reducing unnecessary bulk updates. Fewer checkpoints often reduce FPI rate.</p>{{end}}
 
   {{if .Res.TempFileStats}}
   <h2>Temporary file usage</h2>
@@ -539,6 +549,10 @@
     </table>
   </div>
   {{end}}
+  {{if .Res.WaitEvents}}<p class="section-note">Interpretation: IO-related waits point to storage pressure; review cache hit,
+    shared_buffers, effective_io_concurrency, and query/index design. Lock waits usually indicate long transactions or
+    hot rows; use the Blocking and Long running sections to find blockers, shorten transactions, add missing indexes,
+    or reduce contention.</p>{{end}}
 
   <!-- Concurrency & waits -->
   {{if .Res.WaitEvents}}
