@@ -51,7 +51,6 @@ Multi-DB mode:
 - Flags:
   - `--out` (default `report.html`). Supports `{ts}` placeholder for a timestamp, e.g. `--out report-{ts}.html`.
   - `--timeout` (default `30s`).
-  - `--stats` (e.g. `24h`, `7d`) to filter `pg_stat_statements` data since a duration.
   - `--open` (default `true`) to open the report after generation.
   - `--suppress` to hide specific recommendation codes (comma-separated), e.g. `--suppress missing-extensions,cache-overall`.
   - `--dbs` to include additional databases for tables/indexes metrics (comma-separated). Example: `--dbs db1,db2`.
