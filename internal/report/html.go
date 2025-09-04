@@ -469,7 +469,7 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 					return "#hdr-extensions"
 				}
 				return ""
-			case "enable-track-io", "wal-level-minimal", "checkpoint-timeout-low", "ecs-low-vs-sb", "high-max-connections", "autovacuum-naptime-high", "maintenance-work-mem-low", "random-page-cost-default", "no-statement-timeout", "no-idle-tx-timeout", "ssl-off":
+			case "enable-track-io", "wal-level-minimal", "checkpoint-timeout-low", "ecs-low-vs-sb", "high-max-connections", "autovacuum-naptime-high", "maintenance-work-mem-low", "random-page-cost-default", "no-statement-timeout", "no-idle-tx-timeout", "ssl-off", "shared-buffers-low", "max-wal-size-low", "wal-buffers-low", "parallel-workers-low", "work-mem-low":
 				return "#hdr-settings"
 			case "cache-overall":
 				return "#hdr-cache-hit"

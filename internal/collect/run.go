@@ -44,6 +44,7 @@ type Result struct {
 	LockStats            []LockStat
 	TempFileStats        []TempFileStat
 	ExtensionStats       []ExtensionStat
+	MemoryContexts       []MemoryContext
 	// Extras (pg_monitor helpful)
 	WaitEvents          []WaitEventStat
 	FunctionStats       []FunctionStat
@@ -323,6 +324,19 @@ type ExtensionStat struct {
 	Schema      string
 }
 
+// MemoryContext represents a row from pg_backend_memory_contexts for the current backend
+type MemoryContext struct {
+	Name       string
+	Ident      string
+	Parent     string
+	Level      int
+	TotalBytes int64
+	FreeBytes  int64
+	UsedBytes  int64
+	NBlocks    int64
+	FreeChunks int64
+}
+
 // WaitEventStat summarizes waits from pg_stat_activity
 type WaitEventStat struct {
 	Type  string
@@ -432,7 +446,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 
 	// settings of interest (subset)
 	rows, err = conn.Query(ctx, `select name, setting, unit, source from pg_settings where name in (
-        'shared_buffers','work_mem','maintenance_work_mem','effective_cache_size','max_connections','wal_level','max_wal_size','checkpoint_timeout','random_page_cost','seq_page_cost','effective_io_concurrency','autovacuum','autovacuum_naptime','track_io_timing','track_functions') order by name`)
+		'shared_buffers','work_mem','maintenance_work_mem','effective_cache_size','max_connections','max_parallel_workers','wal_buffers','wal_level','max_wal_size','checkpoint_timeout','random_page_cost','seq_page_cost','effective_io_concurrency','autovacuum','autovacuum_naptime','track_io_timing','track_functions') order by name`)
 	if err == nil {
 		for rows.Next() {
 			var s Setting

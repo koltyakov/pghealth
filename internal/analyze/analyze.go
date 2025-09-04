@@ -870,6 +870,61 @@ func Run(res collect.Result) Analysis {
 		}
 	}
 
+	// work_mem guardrails already covered above; add low suggestion if very small
+	if wmS, ok := setting("work_mem"); ok {
+		if wm, _ := asBytes(wmS, true); wm > 0 && wm < 4*1024*1024 { // <4MB
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "work_mem may be too low",
+				Severity:    "rec",
+				Code:        "work-mem-low",
+				Description: fmt.Sprintf("work_mem=%s can cause frequent temp spills for sorts/hashes", wmS.Val),
+				Action:      "Consider 16-64MB depending on workload; prefer per-query SET work_mem for heavy reports.",
+			})
+		}
+	}
+
+	// max_wal_size sanity (too small)
+	if s, ok := setting("max_wal_size"); ok {
+		if mb, ok2 := asBytes(s, true); ok2 && mb > 0 && mb < 2*1024*1024*1024 { // <2GB
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "max_wal_size may be too low",
+				Severity:    "rec",
+				Code:        "max-wal-size-low",
+				Description: "Small max_wal_size can cause frequent checkpoints and high FPI rate.",
+				Action:      "Consider 4-16GB depending on write workload to reduce checkpoint frequency.",
+			})
+		}
+	}
+
+	// wal_buffers heuristic: very small explicit value (<8MB) may be suboptimal; 0 means auto
+	if s, ok := setting("wal_buffers"); ok {
+		if s.Val != "-1" && s.Val != "0" { // -1/0 = auto-tuned
+			if b, ok2 := asBytes(s, true); ok2 && b > 0 && b < 8*1024*1024 {
+				a.Recommendations = append(a.Recommendations, Finding{
+					Title:       "wal_buffers is very low",
+					Severity:    "rec",
+					Code:        "wal-buffers-low",
+					Description: fmt.Sprintf("wal_buffers=%s; small buffers can throttle WAL writes under bursty load", s.Val),
+					Action:      "Either leave wal_buffers at default (auto) or set to at least 16MB for busy systems.",
+				})
+			}
+		}
+	}
+
+	// max_parallel_workers heuristic
+	if s, ok := setting("max_parallel_workers"); ok {
+		val, _ := strconv.Atoi(s.Val)
+		if val > 0 && val < 2 { // effectively disabled
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Parallel workers effectively disabled",
+				Severity:    "rec",
+				Code:        "parallel-workers-low",
+				Description: fmt.Sprintf("max_parallel_workers=%d can limit parallel query speedups", val),
+				Action:      "Set max_parallel_workers (and per-gather variants) to 4-8+ depending on CPU cores and workload.",
+			})
+		}
+	}
+
 	// WAL configuration analysis
 	if s, ok := setting("wal_level"); ok && s.Val == "replica" {
 		a.Infos = append(a.Infos, Finding{
