@@ -1,3 +1,10 @@
+// Package analyze provides analysis and recommendations for PostgreSQL health metrics.
+//
+// This package takes collected metrics from the collect package and generates
+// actionable findings including:
+//   - Recommendations: Suggested improvements for performance and reliability
+//   - Warnings: Issues that need attention but aren't critical
+//   - Infos: Informational findings about the database state
 package analyze
 
 import (
@@ -13,28 +20,128 @@ import (
 	"github.com/koltyakov/pghealth/internal/collect"
 )
 
+// Severity levels for findings.
+const (
+	SeverityInfo    = "info" // Informational finding
+	SeverityWarning = "warn" // Warning - needs attention
+	SeverityRec     = "rec"  // Recommendation for improvement
+)
+
+// Threshold constants for analysis heuristics.
+// These values are based on PostgreSQL best practices and can be tuned.
+const (
+	// cacheHitThreshold is the minimum acceptable cache hit ratio percentage.
+	cacheHitThreshold = 95.0
+
+	// connectionUsageWarningPct triggers a warning when connection usage exceeds this.
+	connectionUsageWarningPct = 80.0
+
+	// longRunningQueryThreshold defines what constitutes a "long" query.
+	longRunningQueryThreshold = 5 * time.Minute
+
+	// tableBloatWarningPct triggers a warning when table bloat exceeds this.
+	tableBloatWarningPct = 20.0
+
+	// tableBloatSevereThreshold indicates severe bloat requiring VACUUM FULL.
+	tableBloatSevereThreshold = 50.0
+
+	// minRowsForBloatAnalysis is the minimum row count to consider for bloat analysis.
+	minRowsForBloatAnalysis = 10000
+
+	// unusedIndexSizeThreshold is the minimum size (bytes) for an unused index to be flagged.
+	unusedIndexSizeThreshold = 100 * 1024 * 1024 // 100MB
+
+	// maxIndexesPerTableWarning triggers a warning when a table has more indexes than this.
+	maxIndexesPerTableWarning = 10
+
+	// minRowsForIndexWarning is the minimum rows for a table without indexes to be flagged.
+	minRowsForIndexWarning = 1000
+
+	// highConnectionsThreshold triggers a recommendation when max_connections exceeds this.
+	highConnectionsThreshold = 100
+
+	// walHighWriteRateBytesPerSec is the WAL write rate (bytes/sec) that triggers a warning.
+	walHighWriteRateBytesPerSec = 10 * 1024 * 1024 // 10MB/s
+
+	// fpiHighRatio is the full-page image ratio that triggers a warning.
+	fpiHighRatio = 0.5
+
+	// fpiModerateRatio is the FPI ratio that triggers a recommendation.
+	fpiModerateRatio = 0.2
+
+	// xidWarningPct triggers a warning when XID age exceeds this percentage of max.
+	xidWarningPct = 50.0
+
+	// xidCriticalPct triggers a critical warning when XID age exceeds this.
+	xidCriticalPct = 75.0
+
+	// idleInTransactionMinutes is the minimum idle-in-transaction duration to flag.
+	idleInTransactionMinutes = 5
+
+	// staleStatsDays is the number of days without analyze to flag.
+	staleStatsDays = 7
+
+	// sequenceWarningPct triggers a warning when sequence usage exceeds this.
+	sequenceWarningPct = 50.0
+
+	// sequenceCriticalPct triggers a critical warning for sequence exhaustion risk.
+	sequenceCriticalPct = 80.0
+
+	// preparedXactAgeHours is the age in hours for a prepared transaction to be flagged.
+	preparedXactAgeHours = 1
+)
+
+// Analysis contains categorized findings from the metrics analysis.
 type Analysis struct {
+	// Recommendations are suggested improvements that would benefit performance.
 	Recommendations []Finding
-	Warnings        []Finding
-	Infos           []Finding
+
+	// Warnings are issues that need attention and may impact availability.
+	Warnings []Finding
+
+	// Infos are informational observations about the database state.
+	Infos []Finding
 }
 
+// Finding represents a single analysis finding with its details.
 type Finding struct {
-	Title       string
-	Severity    string // info, warn, rec
-	Code        string // short machine code for suppression
+	// Title is a short descriptive name for the finding.
+	Title string
+
+	// Severity indicates the importance level (info, warn, rec).
+	Severity string
+
+	// Code is a machine-readable identifier for suppression support.
+	Code string
+
+	// Description provides details about what was found.
 	Description string
-	Action      string
+
+	// Action suggests what steps to take to address the finding.
+	Action string
 }
 
+// Run analyzes the collected PostgreSQL metrics and returns categorized findings.
+// The analysis covers connection health, cache efficiency, query performance,
+// index usage, bloat detection, and configuration best practices.
+//
+// INVARIANTS:
+//   - Input res should contain valid collected metrics (not necessarily complete)
+//   - Output slices are never nil (always initialized)
+//   - All findings have non-empty Title and Severity
 func Run(res collect.Result) Analysis {
-	a := Analysis{}
+	a := Analysis{
+		Recommendations: make([]Finding, 0, 16), // Pre-allocate for typical case
+		Warnings:        make([]Finding, 0, 8),
+		Infos:           make([]Finding, 0, 16),
+	}
+
 	// Uptime info
 	if !res.ConnInfo.StartTime.IsZero() {
 		up := time.Since(res.ConnInfo.StartTime)
 		a.Infos = append(a.Infos, Finding{
 			Title:       "Server uptime",
-			Severity:    "info",
+			Severity:    SeverityInfo,
 			Description: fmt.Sprintf("%s (since %s)", humanizeDuration(up), formatLocalTime(res.ConnInfo.StartTime)),
 			Action:      "",
 		})
@@ -42,22 +149,22 @@ func Run(res collect.Result) Analysis {
 
 	// Cache hit ratios
 	if res.CacheHitCurrent > 0 {
-		if res.CacheHitCurrent < 95 {
+		if res.CacheHitCurrent < cacheHitThreshold {
 			a.Warnings = append(a.Warnings, Finding{
 				Title:       "Low cache hit ratio (current DB)",
-				Severity:    "warn",
+				Severity:    SeverityWarning,
 				Description: fmt.Sprintf("Cache hit: %.1f%%", res.CacheHitCurrent),
 				Action:      "Review working set size, shared_buffers, and query patterns; ensure sufficient memory and indexes.",
 			})
 		} else {
-			a.Infos = append(a.Infos, Finding{Title: "Cache hit ratio (current)", Severity: "info", Description: fmt.Sprintf("%.1f%%", res.CacheHitCurrent)})
+			a.Infos = append(a.Infos, Finding{Title: "Cache hit ratio (current)", Severity: SeverityInfo, Description: fmt.Sprintf("%.1f%%", res.CacheHitCurrent)})
 		}
 	}
 	if res.CacheHitOverall > 0 {
-		if res.CacheHitOverall < 95 {
+		if res.CacheHitOverall < cacheHitThreshold {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Overall cache hit could improve",
-				Severity:    "rec",
+				Severity:    SeverityRec,
 				Code:        "cache-overall",
 				Description: fmt.Sprintf("Cluster-wide cache hit: %.1f%%", res.CacheHitOverall),
 				Action:      "Consider memory tuning and index coverage across busiest databases.",
@@ -68,15 +175,15 @@ func Run(res collect.Result) Analysis {
 	// Connection usage
 	if res.ConnInfo.MaxConnections > 0 && res.TotalConnections > 0 {
 		pct := float64(res.TotalConnections) / float64(res.ConnInfo.MaxConnections) * 100
-		if pct >= 80 {
+		if pct >= connectionUsageWarningPct {
 			a.Warnings = append(a.Warnings, Finding{
 				Title:       "High connection usage",
-				Severity:    "warn",
+				Severity:    SeverityWarning,
 				Description: fmt.Sprintf("%d/%d (%.0f%%) connections in use", res.TotalConnections, res.ConnInfo.MaxConnections, pct),
 				Action:      "Use a pooler (pgbouncer), limit app connection pools, and tune max_connections accordingly.",
 			})
 		} else {
-			a.Infos = append(a.Infos, Finding{Title: "Connection usage", Severity: "info", Description: fmt.Sprintf("%d/%d (%.0f%%)", res.TotalConnections, res.ConnInfo.MaxConnections, pct)})
+			a.Infos = append(a.Infos, Finding{Title: "Connection usage", Severity: SeverityInfo, Description: fmt.Sprintf("%d/%d (%.0f%%)", res.TotalConnections, res.ConnInfo.MaxConnections, pct)})
 		}
 	}
 
@@ -1032,6 +1139,191 @@ func Run(res collect.Result) Analysis {
 				Action:      "Set idle_in_transaction_session_timeout to 10-60 minutes to prevent abandoned transactions.",
 			})
 		}
+	}
+
+	// ============================================================
+	// Additional Health Checks Analysis
+	// ============================================================
+
+	// 1. XID Wraparound Risk Analysis - CRITICAL safety check
+	if len(res.XIDAge) > 0 {
+		criticalDBs := []string{}
+		warningDBs := []string{}
+		for _, x := range res.XIDAge {
+			if x.PctToLimit >= xidCriticalPct {
+				criticalDBs = append(criticalDBs, fmt.Sprintf("%s (%.1f%%)", x.Datname, x.PctToLimit))
+			} else if x.PctToLimit >= xidWarningPct {
+				warningDBs = append(warningDBs, fmt.Sprintf("%s (%.1f%%)", x.Datname, x.PctToLimit))
+			}
+		}
+		if len(criticalDBs) > 0 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "CRITICAL: XID wraparound imminent",
+				Severity:    SeverityWarning,
+				Code:        "xid-wraparound-critical",
+				Description: fmt.Sprintf("Databases approaching XID wraparound: %s. PostgreSQL will SHUT DOWN to prevent data corruption if this reaches 100%%.", strings.Join(criticalDBs, ", ")),
+				Action:      "IMMEDIATELY run VACUUM FREEZE on affected databases. Consider emergency maintenance window. Check for long-running transactions blocking vacuum.",
+			})
+		}
+		if len(warningDBs) > 0 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "XID age warning",
+				Severity:    SeverityWarning,
+				Code:        "xid-age-warning",
+				Description: fmt.Sprintf("Databases with elevated XID age: %s", strings.Join(warningDBs, ", ")),
+				Action:      "Schedule VACUUM FREEZE operations. Review autovacuum_freeze_max_age settings. Ensure autovacuum is not blocked.",
+			})
+		}
+		// Info for healthy databases
+		if len(criticalDBs) == 0 && len(warningDBs) == 0 && len(res.XIDAge) > 0 {
+			oldest := res.XIDAge[0] // Already sorted by age DESC
+			a.Infos = append(a.Infos, Finding{
+				Title:       "XID age healthy",
+				Severity:    SeverityInfo,
+				Description: fmt.Sprintf("Oldest XID age: %s at %.1f%% of limit", oldest.Datname, oldest.PctToLimit),
+			})
+		}
+	}
+
+	// 2. Idle-in-Transaction Analysis
+	if len(res.IdleInTransaction) > 0 {
+		a.Warnings = append(a.Warnings, Finding{
+			Title:       "Idle-in-transaction sessions detected",
+			Severity:    SeverityWarning,
+			Code:        "idle-in-transaction",
+			Description: fmt.Sprintf("%d sessions have been idle-in-transaction for >5 minutes. These block vacuum, hold locks, and consume connection slots.", len(res.IdleInTransaction)),
+			Action:      "Investigate application connection handling. Set idle_in_transaction_session_timeout. Consider terminating with pg_terminate_backend() if safe.",
+		})
+	}
+
+	// 3. Stale Statistics Analysis
+	if len(res.StaleStatsTables) > 0 {
+		count := len(res.StaleStatsTables)
+		tables := make([]string, 0, 5)
+		for i, t := range res.StaleStatsTables {
+			if i >= 5 {
+				break
+			}
+			tables = append(tables, fmt.Sprintf("%s.%s", t.Schema, t.Table))
+		}
+		desc := fmt.Sprintf("%d tables have outdated statistics (not analyzed in %d+ days): %s", count, staleStatsDays, strings.Join(tables, ", "))
+		if count > 5 {
+			desc += fmt.Sprintf(" and %d more", count-5)
+		}
+		a.Recommendations = append(a.Recommendations, Finding{
+			Title:       "Stale table statistics",
+			Severity:    SeverityRec,
+			Code:        "stale-statistics",
+			Description: desc,
+			Action:      "Run ANALYZE on affected tables. Review autovacuum_analyze_threshold and autovacuum_analyze_scale_factor settings.",
+		})
+	}
+
+	// 4. Duplicate Indexes Analysis
+	if len(res.DuplicateIndexes) > 0 {
+		totalWasted := int64(0)
+		pairs := make([]string, 0, 5)
+		for i, di := range res.DuplicateIndexes {
+			// The smaller/less-used index is typically the one to drop
+			wastedSize := di.Index1Size
+			if di.Index2Size < di.Index1Size {
+				wastedSize = di.Index2Size
+			}
+			totalWasted += wastedSize
+			if i < 5 {
+				pairs = append(pairs, fmt.Sprintf("%s.%s ↔ %s", di.Schema, di.Index1, di.Index2))
+			}
+		}
+		a.Recommendations = append(a.Recommendations, Finding{
+			Title:       "Duplicate indexes detected",
+			Severity:    SeverityRec,
+			Code:        "duplicate-indexes",
+			Description: fmt.Sprintf("%d index pairs have identical column definitions, wasting ~%.2f GB: %s", len(res.DuplicateIndexes), bytesToGB(totalWasted), strings.Join(pairs, "; ")),
+			Action:      "Compare scan counts and drop the less-used duplicate. Verify no unique constraints depend on them first.",
+		})
+	}
+
+	// 5. Invalid Indexes Analysis
+	if len(res.InvalidIndexes) > 0 {
+		names := make([]string, 0, len(res.InvalidIndexes))
+		totalSize := int64(0)
+		for _, ii := range res.InvalidIndexes {
+			names = append(names, fmt.Sprintf("%s.%s (%s)", ii.Schema, ii.Name, ii.Reason))
+			totalSize += ii.SizeBytes
+		}
+		a.Warnings = append(a.Warnings, Finding{
+			Title:       "Invalid indexes found",
+			Severity:    SeverityWarning,
+			Code:        "invalid-indexes",
+			Description: fmt.Sprintf("%d invalid indexes wasting %.2f GB and not providing any benefit: %s", len(res.InvalidIndexes), bytesToGB(totalSize), strings.Join(names, ", ")),
+			Action:      "Drop invalid indexes with DROP INDEX and recreate with CREATE INDEX CONCURRENTLY. Investigate why they failed (disk space, locks, errors).",
+		})
+	}
+
+	// 6. Foreign Key Missing Indexes Analysis
+	if len(res.FKMissingIndexes) > 0 {
+		// Prioritize by table size (rows)
+		count := len(res.FKMissingIndexes)
+		fks := make([]string, 0, 5)
+		for i, fk := range res.FKMissingIndexes {
+			if i >= 5 {
+				break
+			}
+			fks = append(fks, fmt.Sprintf("%s.%s(%s)", fk.Schema, fk.Table, fk.Columns))
+		}
+		desc := fmt.Sprintf("%d foreign keys lack supporting indexes, causing slow JOINs and cascading deletes: %s", count, strings.Join(fks, ", "))
+		if count > 5 {
+			desc += fmt.Sprintf(" and %d more", count-5)
+		}
+		a.Recommendations = append(a.Recommendations, Finding{
+			Title:       "Foreign keys without indexes",
+			Severity:    SeverityRec,
+			Code:        "fk-missing-index",
+			Description: desc,
+			Action:      "Create indexes on FK columns. Example: CREATE INDEX CONCURRENTLY ON table(fk_column). Review 'FK Missing Indexes' table for suggested DDL.",
+		})
+	}
+
+	// 7. Sequence Exhaustion Analysis
+	if len(res.SequenceHealth) > 0 {
+		criticalSeqs := []string{}
+		warningSeqs := []string{}
+		for _, sq := range res.SequenceHealth {
+			if sq.PctUsed >= sequenceCriticalPct {
+				criticalSeqs = append(criticalSeqs, fmt.Sprintf("%s.%s (%.1f%%)", sq.Schema, sq.Name, sq.PctUsed))
+			} else if sq.PctUsed >= sequenceWarningPct {
+				warningSeqs = append(warningSeqs, fmt.Sprintf("%s.%s (%.1f%%)", sq.Schema, sq.Name, sq.PctUsed))
+			}
+		}
+		if len(criticalSeqs) > 0 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "Sequences near exhaustion",
+				Severity:    SeverityWarning,
+				Code:        "sequence-exhaustion-critical",
+				Description: fmt.Sprintf("Sequences >%d%% exhausted will cause INSERT failures: %s", int(sequenceCriticalPct), strings.Join(criticalSeqs, ", ")),
+				Action:      "Alter sequences to use bigint (ALTER SEQUENCE ... AS bigint) or reset with appropriate min/max values. Plan migration before exhaustion.",
+			})
+		}
+		if len(warningSeqs) > 0 {
+			a.Recommendations = append(a.Recommendations, Finding{
+				Title:       "Sequences approaching exhaustion",
+				Severity:    SeverityRec,
+				Code:        "sequence-exhaustion-warning",
+				Description: fmt.Sprintf("Sequences >%d%% used: %s", int(sequenceWarningPct), strings.Join(warningSeqs, ", ")),
+				Action:      "Monitor sequence usage. Plan to convert to bigint before reaching limit.",
+			})
+		}
+	}
+
+	// 8. Prepared Transactions (2PC) Analysis
+	if len(res.PreparedXacts) > 0 {
+		a.Warnings = append(a.Warnings, Finding{
+			Title:       "Prepared transactions detected",
+			Severity:    SeverityWarning,
+			Code:        "prepared-transactions",
+			Description: fmt.Sprintf("%d prepared (2PC) transactions found. These block vacuum, prevent XID advancement, and hold locks indefinitely until committed or rolled back.", len(res.PreparedXacts)),
+			Action:      "Investigate orphaned transactions with pg_prepared_xacts. Commit with COMMIT PREPARED 'gid' or rollback with ROLLBACK PREPARED 'gid'. Consider disabling max_prepared_transactions if not using 2PC.",
+		})
 	}
 
 	return a

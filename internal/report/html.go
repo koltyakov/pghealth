@@ -1,3 +1,7 @@
+// Package report provides HTML and prompt generation for pghealth reports.
+//
+// This package renders collected metrics and analysis results into a
+// comprehensive HTML report with interactive elements and visualizations.
 package report
 
 import (
@@ -15,12 +19,77 @@ import (
 	"github.com/koltyakov/pghealth/internal/collect"
 )
 
+// Report generation constants.
+const (
+	// largeIndexThreshold is the size threshold (bytes) for flagging large unused indexes.
+	largeIndexThreshold = 100 * 1024 * 1024 // 100MB
+
+	// attentionQueryShareThreshold is the minimum share of total time for attention.
+	attentionQueryShareThreshold = 0.10 // 10%
+
+	// attentionQueryHighShareThreshold is the share that definitely needs attention.
+	attentionQueryHighShareThreshold = 0.20 // 20%
+
+	// maxAttentionQueries limits the number of queries highlighted for attention.
+	maxAttentionQueries = 5
+
+	// shortenedQueryLength is the max length for shortened query display.
+	shortenedQueryLength = 120
+)
+
+// WriteHTML generates an HTML report from the collected metrics and analysis.
+// The report is written to the specified path. If path is "-", the report
+// would be written to stdout (currently not implemented - defaults to file).
+//
+// INVARIANTS:
+//   - path must be a valid file path (non-empty)
+//   - res and a may contain partial data; nil slices are handled safely
+//   - meta is for display only and may be partially populated
+//
+// Returns an error if the file cannot be created or the template fails to execute.
 func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect.Meta) error {
+	if path == "" {
+		return fmt.Errorf("output path cannot be empty")
+	}
+
+	// Defensive: ensure slice fields are non-nil to prevent template panics
+	if res.DBs == nil {
+		res.DBs = []collect.Database{}
+	}
+	if res.Activity == nil {
+		res.Activity = []collect.Activity{}
+	}
+	if res.IndexUnused == nil {
+		res.IndexUnused = []collect.IndexUnused{}
+	}
+	if res.Indexes == nil {
+		res.Indexes = []collect.IndexStat{}
+	}
+	if res.Tables == nil {
+		res.Tables = []collect.TableStat{}
+	}
+	if res.TablesWithIndexCount == nil {
+		res.TablesWithIndexCount = []collect.TableIndexCount{}
+	}
+	if a.Recommendations == nil {
+		a.Recommendations = []analyze.Finding{}
+	}
+	if a.Warnings == nil {
+		a.Warnings = []analyze.Finding{}
+	}
+	if a.Infos == nil {
+		a.Infos = []analyze.Finding{}
+	}
+
 	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("create output file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close output file: %w", cerr)
+		}
+	}()
 
 	// Sort numerical metrics descending so greater numbers show on top
 	sort.Slice(res.DBs, func(i, j int) bool { return res.DBs[i].SizeBytes > res.DBs[j].SizeBytes })
@@ -94,15 +163,6 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		}{Database: k, Bytes: v})
 	}
 	sort.Slice(reclaimList, func(i, j int) bool { return reclaimList[i].Bytes > reclaimList[j].Bytes })
-
-	// Precompute whether any client has a hostname to show
-	showHostname := false
-	for _, c := range res.ConnectionsByClient {
-		if c.Hostname != "" {
-			showHostname = true
-			break
-		}
-	}
 
 	// Build a combined set of unused indexes from both sources (candidates + bloat view), deduped
 	combined := make(map[string]collect.IndexUnused)
@@ -280,15 +340,11 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 			return ""
 		}
 		top := res.ConnectionsByClient[0]
-		who := top.Address
-		if top.Hostname != "" {
-			who = top.Hostname
-		}
 		suffix := "s"
 		if top.Count == 1 {
 			suffix = ""
 		}
-		return fmt.Sprintf("Top client: %s (%d connection%s).", who, top.Count, suffix)
+		return fmt.Sprintf("Top client: %s (%d connection%s).", top.Address, top.Count, suffix)
 	}()
 	waitsSummary := func() string {
 		if len(res.WaitEvents) == 0 {
@@ -473,6 +529,47 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 				return "#hdr-settings"
 			case "cache-overall":
 				return "#hdr-cache-hit"
+			// New health check anchors
+			case "xid-wraparound-critical", "xid-age-warning":
+				if len(res.XIDAge) > 0 {
+					return "#hdr-xid-age"
+				}
+				return ""
+			case "idle-in-transaction":
+				if len(res.IdleInTransaction) > 0 {
+					return "#hdr-idle-in-transaction"
+				}
+				return ""
+			case "stale-statistics":
+				if len(res.StaleStatsTables) > 0 {
+					return "#hdr-stale-statistics"
+				}
+				return ""
+			case "duplicate-indexes":
+				if len(res.DuplicateIndexes) > 0 {
+					return "#hdr-duplicate-indexes"
+				}
+				return ""
+			case "invalid-indexes":
+				if len(res.InvalidIndexes) > 0 {
+					return "#hdr-invalid-indexes"
+				}
+				return ""
+			case "fk-missing-index":
+				if len(res.FKMissingIndexes) > 0 {
+					return "#hdr-fk-missing-indexes"
+				}
+				return ""
+			case "sequence-exhaustion-critical", "sequence-exhaustion-warning":
+				if len(res.SequenceHealth) > 0 {
+					return "#hdr-sequence-health"
+				}
+				return ""
+			case "prepared-transactions":
+				if len(res.PreparedXacts) > 0 {
+					return "#hdr-prepared-xacts"
+				}
+				return ""
 			}
 			// Fallback by keywords in title when code missing
 			lt := strings.ToLower(title)
@@ -611,7 +708,6 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		Res                 collect.Result
 		A                   analyze.Analysis
 		Meta                collect.Meta
-		ShowHostname        bool
 		Activity            []collect.Activity
 		TablesByRows        []collect.TableStat
 		TablesBySize        []collect.TableStat
@@ -640,7 +736,7 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		// attention lists
 		AttentionTotalTime []attnItem
 		AttentionCalls     []attnItem
-	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize,
+	}{Res: res, A: a, Meta: meta, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize,
 		ShowDBTablesByRows: showDBTablesByRows, ShowDBTablesBySize: showDBTablesBySize, ShowDBIndexUnused: showDBIndexUnused, ShowDBIndexUsageLow: showDBIndexUsageLow, ShowDBIndexCounts: showDBIndexCounts,
 		ReclaimByDB: reclaimList, ReclaimTotal: reclaimTotal,
 		ConnSummary: connSummary, DBsSummary: dbsSummary, CacheHitsSummary: cacheHitsSummary, IndexUnusedSummary: indexUnusedSummary,
