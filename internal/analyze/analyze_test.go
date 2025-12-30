@@ -280,3 +280,231 @@ func BenchmarkRun(b *testing.B) {
 		Run(res)
 	}
 }
+
+// TestXIDWraparoundWarning verifies XID wraparound detection.
+func TestXIDWraparoundWarning(t *testing.T) {
+	tests := []struct {
+		name           string
+		pctToLimit     float64
+		expectCritical bool
+		expectWarning  bool
+	}{
+		{"healthy XID age", 20.0, false, false},
+		{"warning XID age", 55.0, false, true},
+		{"critical XID age", 80.0, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := collect.Result{
+				XIDAge: []collect.DatabaseXIDAge{
+					{Datname: "testdb", Age: int64(float64(2147483647) * tt.pctToLimit / 100), PctToLimit: tt.pctToLimit},
+				},
+				Extensions: collect.Extensions{PgStatStatements: true},
+			}
+			a := Run(res)
+
+			foundCritical := false
+			foundWarning := false
+			for _, w := range a.Warnings {
+				if w.Code == "xid-wraparound-critical" {
+					foundCritical = true
+				}
+				if w.Code == "xid-age-warning" {
+					foundWarning = true
+				}
+			}
+
+			if foundCritical != tt.expectCritical {
+				t.Errorf("XID %.1f%%: expected critical=%v, got %v", tt.pctToLimit, tt.expectCritical, foundCritical)
+			}
+			if foundWarning != tt.expectWarning {
+				t.Errorf("XID %.1f%%: expected warning=%v, got %v", tt.pctToLimit, tt.expectWarning, foundWarning)
+			}
+		})
+	}
+}
+
+// TestIdleInTransactionWarning verifies idle-in-transaction detection.
+func TestIdleInTransactionWarning(t *testing.T) {
+	res := collect.Result{
+		IdleInTransaction: []collect.IdleInTransaction{
+			{PID: 1, User: "app", Duration: "00:10:00", Query: "SELECT 1"},
+		},
+		Extensions: collect.Extensions{PgStatStatements: true},
+	}
+	a := Run(res)
+
+	foundWarning := false
+	for _, w := range a.Warnings {
+		if w.Code == "idle-in-transaction" {
+			foundWarning = true
+			break
+		}
+	}
+
+	if !foundWarning {
+		t.Error("expected warning for idle-in-transaction sessions")
+	}
+}
+
+// TestStaleStatisticsRecommendation verifies stale statistics detection.
+func TestStaleStatisticsRecommendation(t *testing.T) {
+	res := collect.Result{
+		StaleStatsTables: []collect.StaleStatsTable{
+			{Schema: "public", Table: "users", RowEstimate: 50000, DaysSinceAnalyze: 14},
+		},
+		Extensions: collect.Extensions{PgStatStatements: true},
+	}
+	a := Run(res)
+
+	foundRec := false
+	for _, r := range a.Recommendations {
+		if r.Code == "stale-statistics" {
+			foundRec = true
+			break
+		}
+	}
+
+	if !foundRec {
+		t.Error("expected recommendation for stale statistics")
+	}
+}
+
+// TestDuplicateIndexesRecommendation verifies duplicate index detection.
+func TestDuplicateIndexesRecommendation(t *testing.T) {
+	res := collect.Result{
+		DuplicateIndexes: []collect.DuplicateIndex{
+			{Schema: "public", Table: "users", Index1: "idx_a", Index2: "idx_b", Columns: "email", Index1Size: 1024 * 1024, Index2Size: 2048 * 1024},
+		},
+		Extensions: collect.Extensions{PgStatStatements: true},
+	}
+	a := Run(res)
+
+	foundRec := false
+	for _, r := range a.Recommendations {
+		if r.Code == "duplicate-indexes" {
+			foundRec = true
+			break
+		}
+	}
+
+	if !foundRec {
+		t.Error("expected recommendation for duplicate indexes")
+	}
+}
+
+// TestInvalidIndexesWarning verifies invalid index detection.
+func TestInvalidIndexesWarning(t *testing.T) {
+	res := collect.Result{
+		InvalidIndexes: []collect.InvalidIndex{
+			{Schema: "public", Table: "users", Name: "idx_broken", SizeBytes: 10 * 1024 * 1024, Reason: "invalid"},
+		},
+		Extensions: collect.Extensions{PgStatStatements: true},
+	}
+	a := Run(res)
+
+	foundWarning := false
+	for _, w := range a.Warnings {
+		if w.Code == "invalid-indexes" {
+			foundWarning = true
+			break
+		}
+	}
+
+	if !foundWarning {
+		t.Error("expected warning for invalid indexes")
+	}
+}
+
+// TestFKMissingIndexRecommendation verifies FK missing index detection.
+func TestFKMissingIndexRecommendation(t *testing.T) {
+	res := collect.Result{
+		FKMissingIndexes: []collect.FKMissingIndex{
+			{Schema: "public", Table: "orders", Constraint: "fk_customer", Columns: "customer_id", RefTable: "customers", TableRows: 100000},
+		},
+		Extensions: collect.Extensions{PgStatStatements: true},
+	}
+	a := Run(res)
+
+	foundRec := false
+	for _, r := range a.Recommendations {
+		if r.Code == "fk-missing-index" {
+			foundRec = true
+			break
+		}
+	}
+
+	if !foundRec {
+		t.Error("expected recommendation for FK missing index")
+	}
+}
+
+// TestSequenceExhaustionWarning verifies sequence exhaustion detection.
+func TestSequenceExhaustionWarning(t *testing.T) {
+	tests := []struct {
+		name           string
+		pctUsed        float64
+		expectCritical bool
+		expectWarning  bool
+	}{
+		{"healthy sequence", 30.0, false, false},
+		{"warning sequence", 55.0, false, true},
+		{"critical sequence", 85.0, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := collect.Result{
+				SequenceHealth: []collect.SequenceHealth{
+					{Schema: "public", Name: "users_id_seq", LastValue: int64(tt.pctUsed * 1000), MaxValue: 100000, PctUsed: tt.pctUsed},
+				},
+				Extensions: collect.Extensions{PgStatStatements: true},
+			}
+			a := Run(res)
+
+			foundCritical := false
+			foundWarning := false
+			for _, w := range a.Warnings {
+				if w.Code == "sequence-exhaustion-critical" {
+					foundCritical = true
+				}
+			}
+			for _, r := range a.Recommendations {
+				if r.Code == "sequence-exhaustion-warning" {
+					foundWarning = true
+				}
+			}
+
+			if foundCritical != tt.expectCritical {
+				t.Errorf("sequence %.1f%%: expected critical=%v, got %v", tt.pctUsed, tt.expectCritical, foundCritical)
+			}
+			if foundWarning != tt.expectWarning {
+				t.Errorf("sequence %.1f%%: expected warning=%v, got %v", tt.pctUsed, tt.expectWarning, foundWarning)
+			}
+		})
+	}
+}
+
+// TestPreparedTransactionsWarning verifies prepared transaction detection.
+func TestPreparedTransactionsWarning(t *testing.T) {
+	res := collect.Result{
+		PreparedXacts: []collect.PreparedXact{
+			{GID: "tx1", Owner: "app", Database: "testdb", Age: "01:30:00"},
+		},
+		Extensions: collect.Extensions{PgStatStatements: true},
+	}
+	a := Run(res)
+
+	foundWarning := false
+	for _, w := range a.Warnings {
+		if w.Code == "prepared-transactions" {
+			foundWarning = true
+			break
+		}
+	}
+
+	if !foundWarning {
+		t.Error("expected warning for prepared transactions")
+	}
+}

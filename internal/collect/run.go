@@ -97,6 +97,16 @@ type Result struct {
 	WAL                 *WALStat              // WAL statistics (PG13+)
 	ProgressCreateIndex []ProgressCreateIndex // In-progress index builds
 	ProgressAnalyze     []ProgressAnalyze     // In-progress ANALYZE operations
+
+	// Additional health checks
+	XIDAge            []DatabaseXIDAge    // Transaction ID age per database
+	IdleInTransaction []IdleInTransaction // Long idle-in-transaction sessions
+	StaleStatsTables  []StaleStatsTable   // Tables with outdated statistics
+	DuplicateIndexes  []DuplicateIndex    // Indexes with identical definitions
+	InvalidIndexes    []InvalidIndex      // Failed/invalid indexes
+	FKMissingIndexes  []FKMissingIndex    // Foreign keys without supporting index
+	SequenceHealth    []SequenceHealth    // Sequences approaching exhaustion
+	PreparedXacts     []PreparedXact      // Orphaned prepared transactions
 }
 
 type ConnInfo struct {
@@ -427,6 +437,94 @@ type ProgressAnalyze struct {
 	Phase       string
 	SampleScans int64
 	SampleTotal int64
+}
+
+// DatabaseXIDAge tracks transaction ID age for wraparound risk assessment
+type DatabaseXIDAge struct {
+	Datname    string
+	Age        int64   // age(datfrozenxid)
+	PctToLimit float64 // percentage toward 2^31 wraparound
+	FrozenXID  int64   // datfrozenxid value
+	MinMXID    int64   // datminmxid for multixact
+	MinMXIDAge int64   // age of oldest multixact
+}
+
+// IdleInTransaction tracks sessions stuck in idle-in-transaction state
+type IdleInTransaction struct {
+	Datname     string
+	PID         int
+	User        string
+	Application string
+	Duration    string
+	Query       string // last query before going idle
+	WaitEvent   string
+}
+
+// StaleStatsTable tracks tables with outdated statistics
+type StaleStatsTable struct {
+	Schema           string
+	Table            string
+	RowEstimate      int64
+	LastAnalyze      *time.Time
+	LastAutoAnalyze  *time.Time
+	ModsSinceAnalyze int64
+	DaysSinceAnalyze int
+}
+
+// DuplicateIndex identifies indexes with redundant column definitions
+type DuplicateIndex struct {
+	Schema      string
+	Table       string
+	Index1      string
+	Index2      string
+	Columns     string
+	Index1Size  int64
+	Index2Size  int64
+	Index1Scans int64
+	Index2Scans int64
+}
+
+// InvalidIndex identifies indexes that failed to build
+type InvalidIndex struct {
+	Schema    string
+	Table     string
+	Name      string
+	SizeBytes int64
+	DDL       string
+	Reason    string // "invalid" or "not ready"
+}
+
+// FKMissingIndex identifies foreign keys without supporting indexes
+type FKMissingIndex struct {
+	Schema       string
+	Table        string
+	Constraint   string
+	Columns      string
+	RefTable     string
+	RefColumns   string
+	TableRows    int64
+	SuggestedDDL string
+}
+
+// SequenceHealth tracks sequences approaching exhaustion
+type SequenceHealth struct {
+	Schema    string
+	Name      string
+	LastValue int64
+	MaxValue  int64
+	Increment int64
+	PctUsed   float64
+	CallsLeft int64 // remaining increments before exhaustion
+}
+
+// PreparedXact tracks prepared (2PC) transactions that may be orphaned
+type PreparedXact struct {
+	Transaction string
+	GID         string
+	Owner       string
+	Database    string
+	Prepared    time.Time
+	Age         string // duration since prepared
 }
 
 func Run(ctx context.Context, cfg Config) (Result, error) {
@@ -1544,6 +1642,223 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				c2.Close(ctx)
 			}
 		}
+	}
+
+	// ============================================================
+	// Additional Health Checks
+	// ============================================================
+
+	// 1. XID Wraparound Risk - Transaction ID age per database
+	// Maximum XID age before wraparound is ~2 billion (2^31)
+	const xidMax = 2147483647 // 2^31 - 1
+	if rows, err := conn.Query(ctx, `SELECT datname,
+			age(datfrozenxid) as xid_age,
+			datfrozenxid::text::bigint as frozen_xid,
+			datminmxid::text::bigint as min_mxid,
+			mxid_age(datminmxid) as mxid_age
+		FROM pg_database
+		WHERE datallowconn
+		ORDER BY age(datfrozenxid) DESC`); err == nil {
+		for rows.Next() {
+			var x DatabaseXIDAge
+			_ = rows.Scan(&x.Datname, &x.Age, &x.FrozenXID, &x.MinMXID, &x.MinMXIDAge)
+			x.PctToLimit = float64(x.Age) / float64(xidMax) * 100
+			res.XIDAge = append(res.XIDAge, x)
+		}
+		rows.Close()
+	}
+
+	// 2. Idle-in-Transaction sessions (potential blockers and resource holders)
+	if rows, err := conn.Query(ctx, `SELECT datname, pid, usename, application_name,
+			(now() - state_change)::text as duration,
+			left(query, 200) as query,
+			coalesce(wait_event, '') as wait_event
+		FROM pg_stat_activity
+		WHERE state = 'idle in transaction'
+		  AND (now() - state_change) > interval '5 minutes'
+		ORDER BY (now() - state_change) DESC
+		LIMIT 20`); err == nil {
+		for rows.Next() {
+			var it IdleInTransaction
+			_ = rows.Scan(&it.Datname, &it.PID, &it.User, &it.Application, &it.Duration, &it.Query, &it.WaitEvent)
+			res.IdleInTransaction = append(res.IdleInTransaction, it)
+		}
+		rows.Close()
+	}
+
+	// 3. Stale Statistics - Tables that haven't been analyzed recently
+	if rows, err := conn.Query(ctx, `SELECT schemaname, relname,
+			n_live_tup as row_estimate,
+			last_analyze,
+			last_autoanalyze,
+			n_mod_since_analyze as mods_since_analyze,
+			COALESCE(
+				EXTRACT(epoch FROM (now() - COALESCE(last_analyze, last_autoanalyze)))::int / 86400,
+				999
+			) as days_since_analyze
+		FROM pg_stat_user_tables
+		WHERE n_live_tup > 1000
+		  AND (last_analyze IS NULL AND last_autoanalyze IS NULL
+		       OR COALESCE(last_analyze, last_autoanalyze) < now() - interval '7 days')
+		ORDER BY n_live_tup DESC
+		LIMIT 50`); err == nil {
+		for rows.Next() {
+			var st StaleStatsTable
+			_ = rows.Scan(&st.Table, &st.Schema, &st.RowEstimate, &st.LastAnalyze, &st.LastAutoAnalyze, &st.ModsSinceAnalyze, &st.DaysSinceAnalyze)
+			// Swap schema/table - query returns schemaname first
+			st.Schema, st.Table = st.Table, st.Schema
+			res.StaleStatsTables = append(res.StaleStatsTables, st)
+		}
+		rows.Close()
+	}
+
+	// 4. Duplicate Indexes - Indexes with identical column definitions
+	if rows, err := conn.Query(ctx, `WITH index_cols AS (
+			SELECT n.nspname as schema,
+				   t.relname as table_name,
+				   i.relname as index_name,
+				   pg_get_indexdef(i.oid) as index_def,
+				   array_to_string(array_agg(a.attname ORDER BY x.n), ', ') as columns,
+				   pg_relation_size(i.oid) as size_bytes,
+				   COALESCE(s.idx_scan, 0) as scans
+			FROM pg_index ix
+			JOIN pg_class i ON i.oid = ix.indexrelid
+			JOIN pg_class t ON t.oid = ix.indrelid
+			JOIN pg_namespace n ON n.oid = t.relnamespace
+			LEFT JOIN pg_stat_user_indexes s ON s.indexrelid = i.oid
+			CROSS JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS x(attnum, n)
+			JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = x.attnum
+			WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+			GROUP BY n.nspname, t.relname, i.relname, i.oid, s.idx_scan
+		)
+		SELECT a.schema, a.table_name, a.index_name, b.index_name,
+			   a.columns, a.size_bytes, b.size_bytes, a.scans, b.scans
+		FROM index_cols a
+		JOIN index_cols b ON a.schema = b.schema
+			AND a.table_name = b.table_name
+			AND a.columns = b.columns
+			AND a.index_name < b.index_name
+		ORDER BY a.size_bytes + b.size_bytes DESC
+		LIMIT 20`); err == nil {
+		for rows.Next() {
+			var di DuplicateIndex
+			_ = rows.Scan(&di.Schema, &di.Table, &di.Index1, &di.Index2, &di.Columns,
+				&di.Index1Size, &di.Index2Size, &di.Index1Scans, &di.Index2Scans)
+			res.DuplicateIndexes = append(res.DuplicateIndexes, di)
+		}
+		rows.Close()
+	}
+
+	// 5. Invalid Indexes - Failed concurrent index builds
+	if rows, err := conn.Query(ctx, `SELECT n.nspname as schema,
+			t.relname as table_name,
+			i.relname as index_name,
+			pg_relation_size(i.oid) as size_bytes,
+			pg_get_indexdef(i.oid) as ddl,
+			CASE WHEN NOT ix.indisvalid THEN 'invalid'
+				 WHEN NOT ix.indisready THEN 'not ready'
+				 ELSE 'unknown' END as reason
+		FROM pg_index ix
+		JOIN pg_class i ON i.oid = ix.indexrelid
+		JOIN pg_class t ON t.oid = ix.indrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace
+		WHERE (NOT ix.indisvalid OR NOT ix.indisready)
+		  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+		ORDER BY pg_relation_size(i.oid) DESC`); err == nil {
+		for rows.Next() {
+			var ii InvalidIndex
+			_ = rows.Scan(&ii.Schema, &ii.Table, &ii.Name, &ii.SizeBytes, &ii.DDL, &ii.Reason)
+			res.InvalidIndexes = append(res.InvalidIndexes, ii)
+		}
+		rows.Close()
+	}
+
+	// 6. Foreign Keys Missing Indexes - FK columns without supporting index
+	if rows, err := conn.Query(ctx, `WITH fk_columns AS (
+			SELECT c.conname as constraint_name,
+				   n.nspname as schema,
+				   t.relname as table_name,
+				   array_to_string(array_agg(a.attname ORDER BY x.n), ', ') as columns,
+				   t2.relname as ref_table,
+				   array_to_string(array_agg(a2.attname ORDER BY x.n), ', ') as ref_columns,
+				   t.reltuples::bigint as table_rows,
+				   t.oid as table_oid
+			FROM pg_constraint c
+			JOIN pg_class t ON t.oid = c.conrelid
+			JOIN pg_class t2 ON t2.oid = c.confrelid
+			JOIN pg_namespace n ON n.oid = t.relnamespace
+			CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS x(attnum, ref_attnum, n)
+			JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = x.attnum
+			JOIN pg_attribute a2 ON a2.attrelid = t2.oid AND a2.attnum = x.ref_attnum
+			WHERE c.contype = 'f'
+			  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+			GROUP BY c.conname, n.nspname, t.relname, t2.relname, t.reltuples, t.oid
+		)
+		SELECT f.schema, f.table_name, f.constraint_name, f.columns, f.ref_table, f.ref_columns, f.table_rows,
+			   'CREATE INDEX ON ' || quote_ident(f.schema) || '.' || quote_ident(f.table_name) ||
+			   ' (' || f.columns || ')' as suggested_ddl
+		FROM fk_columns f
+		WHERE NOT EXISTS (
+			SELECT 1 FROM pg_index ix
+			JOIN pg_class ci ON ci.oid = ix.indexrelid
+			WHERE ix.indrelid = f.table_oid
+			  AND (
+				  -- Check if FK columns are a prefix of index columns
+				  string_to_array(f.columns, ', ') <@ (
+					  SELECT array_agg(a.attname ORDER BY x.n)
+					  FROM unnest(ix.indkey) WITH ORDINALITY AS x(attnum, n)
+					  JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = x.attnum
+				  )
+			  )
+		)
+		ORDER BY f.table_rows DESC
+		LIMIT 30`); err == nil {
+		for rows.Next() {
+			var fk FKMissingIndex
+			_ = rows.Scan(&fk.Schema, &fk.Table, &fk.Constraint, &fk.Columns, &fk.RefTable, &fk.RefColumns, &fk.TableRows, &fk.SuggestedDDL)
+			res.FKMissingIndexes = append(res.FKMissingIndexes, fk)
+		}
+		rows.Close()
+	}
+
+	// 7. Sequence Exhaustion Risk
+	// Note: pg_sequences view available in PG10+
+	if rows, err := conn.Query(ctx, `SELECT schemaname, sequencename,
+			last_value,
+			max_value,
+			increment_by,
+			CASE WHEN max_value > 0 AND last_value > 0
+				 THEN (last_value::float8 / max_value::float8 * 100)
+				 ELSE 0 END as pct_used,
+			CASE WHEN increment_by > 0
+				 THEN ((max_value - last_value) / increment_by)
+				 ELSE 0 END as calls_left
+		FROM pg_sequences
+		WHERE last_value IS NOT NULL
+		  AND max_value > 0
+		  AND (last_value::float8 / max_value::float8) > 0.5
+		ORDER BY (last_value::float8 / max_value::float8) DESC
+		LIMIT 20`); err == nil {
+		for rows.Next() {
+			var sq SequenceHealth
+			_ = rows.Scan(&sq.Schema, &sq.Name, &sq.LastValue, &sq.MaxValue, &sq.Increment, &sq.PctUsed, &sq.CallsLeft)
+			res.SequenceHealth = append(res.SequenceHealth, sq)
+		}
+		rows.Close()
+	}
+
+	// 8. Prepared Transactions (2PC) - Can block vacuum and hold locks
+	if rows, err := conn.Query(ctx, `SELECT transaction::text, gid, owner, database,
+			prepared,
+			(now() - prepared)::text as age
+		FROM pg_prepared_xacts
+		ORDER BY prepared ASC`); err == nil {
+		for rows.Next() {
+			var px PreparedXact
+			_ = rows.Scan(&px.Transaction, &px.GID, &px.Owner, &px.Database, &px.Prepared, &px.Age)
+			res.PreparedXacts = append(res.PreparedXacts, px)
+		}
+		rows.Close()
 	}
 
 	return res, nil
