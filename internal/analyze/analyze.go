@@ -1,3 +1,10 @@
+// Package analyze provides analysis and recommendations for PostgreSQL health metrics.
+//
+// This package takes collected metrics from the collect package and generates
+// actionable findings including:
+//   - Recommendations: Suggested improvements for performance and reliability
+//   - Warnings: Issues that need attention but aren't critical
+//   - Infos: Informational findings about the database state
 package analyze
 
 import (
@@ -13,28 +20,107 @@ import (
 	"github.com/koltyakov/pghealth/internal/collect"
 )
 
+// Severity levels for findings.
+const (
+	SeverityInfo    = "info" // Informational finding
+	SeverityWarning = "warn" // Warning - needs attention
+	SeverityRec     = "rec"  // Recommendation for improvement
+)
+
+// Threshold constants for analysis heuristics.
+// These values are based on PostgreSQL best practices and can be tuned.
+const (
+	// cacheHitThreshold is the minimum acceptable cache hit ratio percentage.
+	cacheHitThreshold = 95.0
+
+	// connectionUsageWarningPct triggers a warning when connection usage exceeds this.
+	connectionUsageWarningPct = 80.0
+
+	// longRunningQueryThreshold defines what constitutes a "long" query.
+	longRunningQueryThreshold = 5 * time.Minute
+
+	// tableBloatWarningPct triggers a warning when table bloat exceeds this.
+	tableBloatWarningPct = 20.0
+
+	// tableBloatSevereThreshold indicates severe bloat requiring VACUUM FULL.
+	tableBloatSevereThreshold = 50.0
+
+	// minRowsForBloatAnalysis is the minimum row count to consider for bloat analysis.
+	minRowsForBloatAnalysis = 10000
+
+	// unusedIndexSizeThreshold is the minimum size (bytes) for an unused index to be flagged.
+	unusedIndexSizeThreshold = 100 * 1024 * 1024 // 100MB
+
+	// maxIndexesPerTableWarning triggers a warning when a table has more indexes than this.
+	maxIndexesPerTableWarning = 10
+
+	// minRowsForIndexWarning is the minimum rows for a table without indexes to be flagged.
+	minRowsForIndexWarning = 1000
+
+	// highConnectionsThreshold triggers a recommendation when max_connections exceeds this.
+	highConnectionsThreshold = 100
+
+	// walHighWriteRateBytesPerSec is the WAL write rate (bytes/sec) that triggers a warning.
+	walHighWriteRateBytesPerSec = 10 * 1024 * 1024 // 10MB/s
+
+	// fpiHighRatio is the full-page image ratio that triggers a warning.
+	fpiHighRatio = 0.5
+
+	// fpiModerateRatio is the FPI ratio that triggers a recommendation.
+	fpiModerateRatio = 0.2
+)
+
+// Analysis contains categorized findings from the metrics analysis.
 type Analysis struct {
+	// Recommendations are suggested improvements that would benefit performance.
 	Recommendations []Finding
-	Warnings        []Finding
-	Infos           []Finding
+
+	// Warnings are issues that need attention and may impact availability.
+	Warnings []Finding
+
+	// Infos are informational observations about the database state.
+	Infos []Finding
 }
 
+// Finding represents a single analysis finding with its details.
 type Finding struct {
-	Title       string
-	Severity    string // info, warn, rec
-	Code        string // short machine code for suppression
+	// Title is a short descriptive name for the finding.
+	Title string
+
+	// Severity indicates the importance level (info, warn, rec).
+	Severity string
+
+	// Code is a machine-readable identifier for suppression support.
+	Code string
+
+	// Description provides details about what was found.
 	Description string
-	Action      string
+
+	// Action suggests what steps to take to address the finding.
+	Action string
 }
 
+// Run analyzes the collected PostgreSQL metrics and returns categorized findings.
+// The analysis covers connection health, cache efficiency, query performance,
+// index usage, bloat detection, and configuration best practices.
+//
+// INVARIANTS:
+//   - Input res should contain valid collected metrics (not necessarily complete)
+//   - Output slices are never nil (always initialized)
+//   - All findings have non-empty Title and Severity
 func Run(res collect.Result) Analysis {
-	a := Analysis{}
+	a := Analysis{
+		Recommendations: make([]Finding, 0, 16), // Pre-allocate for typical case
+		Warnings:        make([]Finding, 0, 8),
+		Infos:           make([]Finding, 0, 16),
+	}
+
 	// Uptime info
 	if !res.ConnInfo.StartTime.IsZero() {
 		up := time.Since(res.ConnInfo.StartTime)
 		a.Infos = append(a.Infos, Finding{
 			Title:       "Server uptime",
-			Severity:    "info",
+			Severity:    SeverityInfo,
 			Description: fmt.Sprintf("%s (since %s)", humanizeDuration(up), formatLocalTime(res.ConnInfo.StartTime)),
 			Action:      "",
 		})
@@ -42,22 +128,22 @@ func Run(res collect.Result) Analysis {
 
 	// Cache hit ratios
 	if res.CacheHitCurrent > 0 {
-		if res.CacheHitCurrent < 95 {
+		if res.CacheHitCurrent < cacheHitThreshold {
 			a.Warnings = append(a.Warnings, Finding{
 				Title:       "Low cache hit ratio (current DB)",
-				Severity:    "warn",
+				Severity:    SeverityWarning,
 				Description: fmt.Sprintf("Cache hit: %.1f%%", res.CacheHitCurrent),
 				Action:      "Review working set size, shared_buffers, and query patterns; ensure sufficient memory and indexes.",
 			})
 		} else {
-			a.Infos = append(a.Infos, Finding{Title: "Cache hit ratio (current)", Severity: "info", Description: fmt.Sprintf("%.1f%%", res.CacheHitCurrent)})
+			a.Infos = append(a.Infos, Finding{Title: "Cache hit ratio (current)", Severity: SeverityInfo, Description: fmt.Sprintf("%.1f%%", res.CacheHitCurrent)})
 		}
 	}
 	if res.CacheHitOverall > 0 {
-		if res.CacheHitOverall < 95 {
+		if res.CacheHitOverall < cacheHitThreshold {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Overall cache hit could improve",
-				Severity:    "rec",
+				Severity:    SeverityRec,
 				Code:        "cache-overall",
 				Description: fmt.Sprintf("Cluster-wide cache hit: %.1f%%", res.CacheHitOverall),
 				Action:      "Consider memory tuning and index coverage across busiest databases.",
@@ -68,15 +154,15 @@ func Run(res collect.Result) Analysis {
 	// Connection usage
 	if res.ConnInfo.MaxConnections > 0 && res.TotalConnections > 0 {
 		pct := float64(res.TotalConnections) / float64(res.ConnInfo.MaxConnections) * 100
-		if pct >= 80 {
+		if pct >= connectionUsageWarningPct {
 			a.Warnings = append(a.Warnings, Finding{
 				Title:       "High connection usage",
-				Severity:    "warn",
+				Severity:    SeverityWarning,
 				Description: fmt.Sprintf("%d/%d (%.0f%%) connections in use", res.TotalConnections, res.ConnInfo.MaxConnections, pct),
 				Action:      "Use a pooler (pgbouncer), limit app connection pools, and tune max_connections accordingly.",
 			})
 		} else {
-			a.Infos = append(a.Infos, Finding{Title: "Connection usage", Severity: "info", Description: fmt.Sprintf("%d/%d (%.0f%%)", res.TotalConnections, res.ConnInfo.MaxConnections, pct)})
+			a.Infos = append(a.Infos, Finding{Title: "Connection usage", Severity: SeverityInfo, Description: fmt.Sprintf("%d/%d (%.0f%%)", res.TotalConnections, res.ConnInfo.MaxConnections, pct)})
 		}
 	}
 

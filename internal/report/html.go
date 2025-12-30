@@ -1,3 +1,7 @@
+// Package report provides HTML and prompt generation for pghealth reports.
+//
+// This package renders collected metrics and analysis results into a
+// comprehensive HTML report with interactive elements and visualizations.
 package report
 
 import (
@@ -15,12 +19,77 @@ import (
 	"github.com/koltyakov/pghealth/internal/collect"
 )
 
+// Report generation constants.
+const (
+	// largeIndexThreshold is the size threshold (bytes) for flagging large unused indexes.
+	largeIndexThreshold = 100 * 1024 * 1024 // 100MB
+
+	// attentionQueryShareThreshold is the minimum share of total time for attention.
+	attentionQueryShareThreshold = 0.10 // 10%
+
+	// attentionQueryHighShareThreshold is the share that definitely needs attention.
+	attentionQueryHighShareThreshold = 0.20 // 20%
+
+	// maxAttentionQueries limits the number of queries highlighted for attention.
+	maxAttentionQueries = 5
+
+	// shortenedQueryLength is the max length for shortened query display.
+	shortenedQueryLength = 120
+)
+
+// WriteHTML generates an HTML report from the collected metrics and analysis.
+// The report is written to the specified path. If path is "-", the report
+// would be written to stdout (currently not implemented - defaults to file).
+//
+// INVARIANTS:
+//   - path must be a valid file path (non-empty)
+//   - res and a may contain partial data; nil slices are handled safely
+//   - meta is for display only and may be partially populated
+//
+// Returns an error if the file cannot be created or the template fails to execute.
 func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect.Meta) error {
+	if path == "" {
+		return fmt.Errorf("output path cannot be empty")
+	}
+
+	// Defensive: ensure slice fields are non-nil to prevent template panics
+	if res.DBs == nil {
+		res.DBs = []collect.Database{}
+	}
+	if res.Activity == nil {
+		res.Activity = []collect.Activity{}
+	}
+	if res.IndexUnused == nil {
+		res.IndexUnused = []collect.IndexUnused{}
+	}
+	if res.Indexes == nil {
+		res.Indexes = []collect.IndexStat{}
+	}
+	if res.Tables == nil {
+		res.Tables = []collect.TableStat{}
+	}
+	if res.TablesWithIndexCount == nil {
+		res.TablesWithIndexCount = []collect.TableIndexCount{}
+	}
+	if a.Recommendations == nil {
+		a.Recommendations = []analyze.Finding{}
+	}
+	if a.Warnings == nil {
+		a.Warnings = []analyze.Finding{}
+	}
+	if a.Infos == nil {
+		a.Infos = []analyze.Finding{}
+	}
+
 	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("create output file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close output file: %w", cerr)
+		}
+	}()
 
 	// Sort numerical metrics descending so greater numbers show on top
 	sort.Slice(res.DBs, func(i, j int) bool { return res.DBs[i].SizeBytes > res.DBs[j].SizeBytes })

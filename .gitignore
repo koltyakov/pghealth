@@ -2,6 +2,7 @@ dist/
 bin/
 *.log
 .DS_Store
+tmp/
 
 *.exe
 *.exe~

@@ -12,6 +12,24 @@ import (
 	"github.com/koltyakov/pghealth/internal/collect"
 )
 
+// Prompt generation constants.
+const (
+	// maxQueryTextLen is the maximum length for query text in prompts.
+	maxQueryTextLen = 8000
+
+	// maxPlanLen is the maximum length for execution plan text in prompts.
+	maxPlanLen = 20000
+
+	// minTableRows is the minimum row count for a table to be included in prompts.
+	minTableRows int64 = 100_000
+
+	// promptFileSuffix is the file extension for prompt sidecar files.
+	promptFileSuffix = ".prompt.txt"
+
+	// promptFilePerms is the file permissions for prompt files.
+	promptFilePerms = 0o644
+)
+
 // promptData is a minimal schema we export for LLM consumption.
 type promptData struct {
 	Queries       []promptQuery         `json:"queries"`
@@ -47,21 +65,25 @@ type promptSchema struct {
 	Tables []promptTable `json:"tables"`
 }
 
-// WritePrompt writes a sidecar .prompt.txt next to the HTML report with actual stats for LLM analysis.
+// WritePrompt generates an LLM-friendly prompt file alongside the HTML report.
+// The prompt contains structured JSON data about top queries, schema information,
+// and unused indexes to facilitate automated performance analysis.
+//
+// Returns the path to the generated prompt file, or empty string if no prompt
+// was generated (e.g., for stdout output).
 func WritePrompt(htmlOutPath string, res collect.Result, meta collect.Meta) (string, error) {
 	if htmlOutPath == "-" || strings.TrimSpace(htmlOutPath) == "" {
 		return "", nil // nothing to do for stdout
 	}
+
 	base := strings.TrimSuffix(htmlOutPath, filepath.Ext(htmlOutPath))
-	promptPath := base + ".prompt.txt"
+	promptPath := base + promptFileSuffix
 
 	// Build data payload
 	pd := promptData{}
 
 	// Queries: include those from TopByTotalTime and TopByCalls (deduped)
 	// Truncate extremely long query texts and plans to keep the prompt manageable
-	const maxQueryTextLen = 8000
-	const maxPlanLen = 20000
 	trimLong := func(s string, max int) string {
 		s = strings.TrimSpace(s)
 		if max > 0 && len(s) > max {
@@ -148,7 +170,6 @@ func WritePrompt(htmlOutPath string, res collect.Result, meta collect.Meta) (str
 
 	// Build DB->Schema->Tables with indexes DDL
 	// Include tables only if large-by-rows OR referenced in top query plans
-	const minTableRows int64 = 100_000 // include tables with >= 100k live rows
 	// map schema.table -> []DDL (deduped)
 	idxDDL := map[string][]string{}
 	seenDDL := map[string]struct{}{}

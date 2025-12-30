@@ -11,46 +11,92 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Collection constants define thresholds and limits for data gathering.
+const (
+	// unusedIndexMinSize is the minimum size (bytes) for an index to be flagged as unused.
+	unusedIndexMinSize = 8 * 1024 * 1024 // 8MB
+
+	// seqScanThreshold is the minimum sequential scans for missing index heuristic.
+	seqScanThreshold = 1000
+
+	// idxScanThreshold is the maximum index scans for missing index heuristic.
+	idxScanThreshold = 100
+
+	// queryTimeoutShort is the timeout for simple queries.
+	queryTimeoutShort = 5 * time.Second
+
+	// queryTimeoutLong is the timeout for complex queries like EXPLAIN.
+	queryTimeoutLong = 10 * time.Second
+
+	// planPerListCap is the soft cap of planned queries per list.
+	// Queries flagged as suspect can exceed this cap.
+	planPerListCap = 10
+
+	// maxResultRows limits results from unbounded queries.
+	maxResultRows = 100
+
+	// maxBlockingRows limits blocking query results.
+	maxBlockingRows = 20
+
+	// maxLongRunningRows limits long-running query results.
+	maxLongRunningRows = 20
+)
+
+// Result contains all collected PostgreSQL metrics and statistics.
+// Fields are populated based on available permissions and extensions.
 type Result struct {
-	ConnInfo       ConnInfo
-	Extensions     Extensions
-	Roles          Roles
-	DBs            []Database
-	Activity       []Activity
-	Settings       []Setting
-	Tables         []TableStat
-	Indexes        []IndexStat
-	IndexUnused    []IndexUnused
-	MissingIndexes []MissingIndexHint
-	Statements     Statements
-	Errors         []string
-	// Healthchecks
-	CacheHitCurrent      float64
-	CacheHitOverall      float64
-	TotalConnections     int
-	ConnectionsByClient  []ClientConn
-	Blocking             []Blocking
-	LongRunning          []LongQuery
-	AutoVacuum           []AutoVacuum
-	CacheHits            []CacheHit
-	IndexUsageLow        []IndexUsage
-	TablesWithIndexCount []TableIndexCount
-	TableBloatStats      []TableBloatStat
-	IndexBloatStats      []IndexBloatStat
-	ReplicationStats     []ReplicationStat
-	CheckpointStats      CheckpointStats
-	MemoryStats          MemoryStats
-	IOStats              IOStats
-	LockStats            []LockStat
-	TempFileStats        []TempFileStat
-	ExtensionStats       []ExtensionStat
-	MemoryContexts       []MemoryContext
-	// Extras (pg_monitor helpful)
-	WaitEvents          []WaitEventStat
-	FunctionStats       []FunctionStat
-	WAL                 *WALStat
-	ProgressCreateIndex []ProgressCreateIndex
-	ProgressAnalyze     []ProgressAnalyze
+	// Connection and server information
+	ConnInfo   ConnInfo   // Basic connection and server details
+	Extensions Extensions // Installed PostgreSQL extensions
+	Roles      Roles      // Role memberships for the connected user
+
+	// Database-level metrics
+	DBs      []Database // List of databases with sizes and connections
+	Activity []Activity // Connection activity by database and state
+	Settings []Setting  // PostgreSQL configuration settings
+
+	// Table and index statistics
+	Tables         []TableStat        // Table-level statistics
+	Indexes        []IndexStat        // Index usage and size statistics
+	IndexUnused    []IndexUnused      // Indexes with zero scans
+	MissingIndexes []MissingIndexHint // Tables that may benefit from indexes
+
+	// Query performance (requires pg_stat_statements)
+	Statements Statements // Top queries by various metrics
+
+	// Collection errors (non-fatal)
+	Errors []string // Errors encountered during collection
+
+	// Health check metrics
+	CacheHitCurrent     float64      // Cache hit ratio for current database
+	CacheHitOverall     float64      // Cluster-wide cache hit ratio
+	TotalConnections    int          // Total active connections
+	ConnectionsByClient []ClientConn // Connections grouped by client
+	Blocking            []Blocking   // Currently blocked queries
+	LongRunning         []LongQuery  // Queries running > 5 minutes
+	AutoVacuum          []AutoVacuum // Active autovacuum workers
+
+	// Detailed statistics
+	CacheHits            []CacheHit        // Cache hit ratio per database
+	IndexUsageLow        []IndexUsage      // Tables with low index usage
+	TablesWithIndexCount []TableIndexCount // Tables with index counts
+	TableBloatStats      []TableBloatStat  // Estimated table bloat
+	IndexBloatStats      []IndexBloatStat  // Estimated index bloat
+	ReplicationStats     []ReplicationStat // Streaming replication status
+	CheckpointStats      CheckpointStats   // Checkpoint activity
+	MemoryStats          MemoryStats       // Memory usage statistics
+	IOStats              IOStats           // I/O statistics
+	LockStats            []LockStat        // Lock contention statistics
+	TempFileStats        []TempFileStat    // Temporary file usage
+	ExtensionStats       []ExtensionStat   // Installed extensions details
+	MemoryContexts       []MemoryContext   // Memory context information
+
+	// Advanced metrics (may require pg_monitor role)
+	WaitEvents          []WaitEventStat       // Wait event statistics
+	FunctionStats       []FunctionStat        // User function statistics
+	WAL                 *WALStat              // WAL statistics (PG13+)
+	ProgressCreateIndex []ProgressCreateIndex // In-progress index builds
+	ProgressAnalyze     []ProgressAnalyze     // In-progress ANALYZE operations
 }
 
 type ConnInfo struct {
@@ -382,9 +428,6 @@ type ProgressAnalyze struct {
 	SampleScans int64
 	SampleTotal int64
 }
-
-// planPerListCap is the soft cap of planned queries per list; suspect queries can exceed this cap.
-const planPerListCap = 10
 
 func Run(ctx context.Context, cfg Config) (Result, error) {
 	var res Result
