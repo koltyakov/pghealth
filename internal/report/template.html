@@ -231,6 +231,16 @@
       color: #4b5563;
     }
 
+    .section-note a {
+      color: #2563eb;
+      text-decoration: none;
+      margin-left: 8px;
+    }
+
+    .section-note a:hover {
+      text-decoration: underline;
+    }
+
     .badge-attn {
       display: inline-block;
       background: #fef3c7;
@@ -353,7 +363,8 @@
   <div id="table-clients" class="table-wrap collapsed">
     <table>
       <thead>
-        <tr>{{if .ShowHostname}}<th>Hostname</th>{{end}}<th>Address</th>
+        <tr>
+          <th>Address</th>
           <th>User</th>
           <th>Application</th>
           <th>Connections</th>
@@ -361,21 +372,16 @@
       </thead>
       <tbody>
         {{if .Res.ConnectionsByClient}}
-        {{range .Res.ConnectionsByClient}}<tr>{{if $.ShowHostname}}<td>{{.Hostname}}</td>{{end}}<td>{{.Address}}</td>
+        {{range .Res.ConnectionsByClient}}<tr>
+          <td>{{.Address}}</td>
           <td>{{.User}}</td>
           <td>{{.Application}}</td>
           <td>{{fmtInt .Count}}</td>
         </tr>{{end}}
         {{else}}
-        {{if .ShowHostname}}
-        <tr>
-          <td colspan="5" class="muted">No data</td>
-        </tr>
-        {{else}}
         <tr>
           <td colspan="4" class="muted">No data</td>
         </tr>
-        {{end}}
         {{end}}
       </tbody>
     </table>
@@ -1145,6 +1151,269 @@
     </table>
   </div>
   {{if gt (len .Res.ReplicationStats) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-replication" data-header="#hdr-replication">Show all</button></div>{{end}}
+  {{end}}
+
+  <!-- Advanced Health Checks -->
+  {{if .Res.XIDAge}}
+  <h2 id="hdr-xid-age">Transaction ID Age (XID Wraparound Risk)</h2>
+  <p class="section-note">XID wraparound causes PostgreSQL to <strong>shut down to prevent data corruption</strong> if transaction age reaches 2^31 (~2.1 billion). Monitor databases approaching 50%+ and run VACUUM FREEZE.
+  <a href="https://www.postgresql.org/docs/current/routine-vacuuming.html#VACUUM-FOR-WRAPAROUND" target="_blank" rel="noopener">📖 PostgreSQL Docs: Preventing Wraparound</a></p>
+  <div id="table-xid-age" class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Database</th>
+          <th>XID Age</th>
+          <th>% to Limit</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.XIDAge}}
+        <tr{{if ge .PctToLimit 75.0}} class="hot"{{end}}>
+          <td>{{.Datname}}</td>
+          <td>{{fmtI64 .Age}}</td>
+          <td>{{fmtF1 .PctToLimit}}%</td>
+          <td>{{if ge .PctToLimit 75.0}}<span class="badge-attn">Critical</span>{{else if ge .PctToLimit 50.0}}<span class="badge-attn">Warning</span>{{else}}<span class="muted">Healthy</span>{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Res.IdleInTransaction}}
+  <h2 id="hdr-idle-in-transaction">Idle-in-Transaction Sessions</h2>
+  <p class="section-note">Sessions stuck in "idle in transaction" block VACUUM, hold locks, consume connections, and can cause XID wraparound. Set <code>idle_in_transaction_session_timeout</code> to automatically terminate them.
+  <a href="https://www.postgresql.org/docs/current/runtime-config-client.html#GUC-IDLE-IN-TRANSACTION-SESSION-TIMEOUT" target="_blank" rel="noopener">📖 PostgreSQL Docs: idle_in_transaction_session_timeout</a></p>
+  <div id="table-idle-in-transaction" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Database</th>
+          <th>PID</th>
+          <th>User</th>
+          <th>Application</th>
+          <th>Duration</th>
+          <th>Last Query</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.IdleInTransaction}}
+        <tr>
+          <td>{{.Datname}}</td>
+          <td>{{.PID}}</td>
+          <td>{{.User}}</td>
+          <td>{{.Application}}</td>
+          <td>{{.Duration}}</td>
+          <td><pre>{{.Query}}</pre></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{if gt (len .Res.IdleInTransaction) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-idle-in-transaction" data-header="#hdr-idle-in-transaction">Show all</button></div>{{end}}
+  </div>
+  {{end}}
+
+  {{if .Res.StaleStatsTables}}
+  <h2 id="hdr-stale-statistics">Stale Table Statistics</h2>
+  <p class="section-note">Tables with outdated statistics lead to poor query plans. PostgreSQL's autovacuum should analyze tables automatically, but high-churn tables may need manual <code>ANALYZE</code> or tuned <code>autovacuum_analyze_scale_factor</code>.
+  <a href="https://www.postgresql.org/docs/current/routine-vacuuming.html#AUTOVACUUM" target="_blank" rel="noopener">📖 PostgreSQL Docs: Autovacuum</a></p>
+  <div id="table-stale-statistics" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Schema</th>
+          <th>Table</th>
+          <th>Row Estimate</th>
+          <th>Days Since Analyze</th>
+          <th>Mods Since Analyze</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.StaleStatsTables}}
+        <tr>
+          <td>{{.Schema}}</td>
+          <td>{{.Table}}</td>
+          <td>{{fmtI64 .RowEstimate}}</td>
+          <td>{{.DaysSinceAnalyze}}</td>
+          <td>{{fmtI64 .ModsSinceAnalyze}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{if gt (len .Res.StaleStatsTables) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-stale-statistics" data-header="#hdr-stale-statistics">Show all</button></div>{{end}}
+  </div>
+  {{end}}
+
+  {{if .Res.DuplicateIndexes}}
+  <h2 id="hdr-duplicate-indexes">Duplicate Indexes</h2>
+  <p class="section-note">Duplicate indexes waste disk space and slow down writes. Compare scan counts to determine which to drop. Always verify no unique constraints depend on them.
+  <a href="https://wiki.postgresql.org/wiki/Index_Maintenance" target="_blank" rel="noopener">📖 PostgreSQL Wiki: Index Maintenance</a></p>
+  <div id="table-duplicate-indexes" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Schema</th>
+          <th>Table</th>
+          <th>Index 1</th>
+          <th>Index 2</th>
+          <th>Columns</th>
+          <th>Idx1 Size</th>
+          <th>Idx2 Size</th>
+          <th>Idx1 Scans</th>
+          <th>Idx2 Scans</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.DuplicateIndexes}}
+        <tr>
+          <td>{{.Schema}}</td>
+          <td>{{.Table}}</td>
+          <td>{{.Index1}}</td>
+          <td>{{.Index2}}</td>
+          <td>{{.Columns}}</td>
+          <td>{{fmtBytes .Index1Size}}</td>
+          <td>{{fmtBytes .Index2Size}}</td>
+          <td>{{fmtI64 .Index1Scans}}</td>
+          <td>{{fmtI64 .Index2Scans}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{if gt (len .Res.DuplicateIndexes) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-duplicate-indexes" data-header="#hdr-duplicate-indexes">Show all</button></div>{{end}}
+  </div>
+  {{end}}
+
+  {{if .Res.InvalidIndexes}}
+  <h2 id="hdr-invalid-indexes">Invalid Indexes</h2>
+  <p class="section-note">Invalid indexes result from failed <code>CREATE INDEX CONCURRENTLY</code> operations. They consume space but provide no benefit. Drop and recreate them.
+  <a href="https://www.postgresql.org/docs/current/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY" target="_blank" rel="noopener">📖 PostgreSQL Docs: CREATE INDEX CONCURRENTLY</a></p>
+  <div id="table-invalid-indexes" class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Schema</th>
+          <th>Table</th>
+          <th>Index</th>
+          <th>Size</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.InvalidIndexes}}
+        <tr class="hot">
+          <td>{{.Schema}}</td>
+          <td>{{.Table}}</td>
+          <td>{{.Name}}</td>
+          <td>{{fmtBytes .SizeBytes}}</td>
+          <td><span class="badge-attn">{{.Reason}}</span></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Res.FKMissingIndexes}}
+  <h2 id="hdr-fk-missing-indexes">Foreign Keys Missing Indexes</h2>
+  <p class="section-note">Foreign key columns without indexes cause slow JOINs and cascading DELETE/UPDATE operations. Create indexes on the FK columns to improve performance.
+  <a href="https://wiki.postgresql.org/wiki/Performance_Optimization#Causes_of_Slow_Queries" target="_blank" rel="noopener">📖 PostgreSQL Wiki: Performance Optimization</a></p>
+  <div id="table-fk-missing-indexes" class="table-wrap collapsed">
+    <table>
+      <thead>
+        <tr>
+          <th>Schema</th>
+          <th>Table</th>
+          <th>Constraint</th>
+          <th>Columns</th>
+          <th>References</th>
+          <th>Table Rows</th>
+          <th>Suggested DDL</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.FKMissingIndexes}}
+        <tr>
+          <td>{{.Schema}}</td>
+          <td>{{.Table}}</td>
+          <td>{{.Constraint}}</td>
+          <td>{{.Columns}}</td>
+          <td>{{.RefTable}}({{.RefColumns}})</td>
+          <td>{{fmtI64 .TableRows}}</td>
+          <td><code>{{.SuggestedDDL}}</code></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{if gt (len .Res.FKMissingIndexes) 10}}<div class="table-tools"><button type="button" class="toggle-rows" onclick="pg_toggleRows(this)" data-target="#table-fk-missing-indexes" data-header="#hdr-fk-missing-indexes">Show all</button></div>{{end}}
+  </div>
+  {{end}}
+
+  {{if .Res.SequenceHealth}}
+  <h2 id="hdr-sequence-health">Sequence Exhaustion Risk</h2>
+  <p class="section-note">Sequences nearing their maximum value will cause INSERT failures. Convert integer sequences to bigint before exhaustion: <code>ALTER SEQUENCE ... AS bigint</code>.
+  <a href="https://www.postgresql.org/docs/current/sql-altersequence.html" target="_blank" rel="noopener">📖 PostgreSQL Docs: ALTER SEQUENCE</a></p>
+  <div id="table-sequence-health" class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Schema</th>
+          <th>Sequence</th>
+          <th>Last Value</th>
+          <th>Max Value</th>
+          <th>% Used</th>
+          <th>Calls Left</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.SequenceHealth}}
+        <tr{{if ge .PctUsed 80.0}} class="hot"{{end}}>
+          <td>{{.Schema}}</td>
+          <td>{{.Name}}</td>
+          <td>{{fmtI64 .LastValue}}</td>
+          <td>{{fmtI64 .MaxValue}}</td>
+          <td>{{fmtF1 .PctUsed}}%</td>
+          <td>{{fmtI64 .CallsLeft}}</td>
+          <td>{{if ge .PctUsed 80.0}}<span class="badge-attn">Critical</span>{{else if ge .PctUsed 50.0}}<span class="badge-attn">Warning</span>{{else}}<span class="muted">Healthy</span>{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Res.PreparedXacts}}
+  <h2 id="hdr-prepared-xacts">Prepared Transactions (2PC)</h2>
+  <p class="section-note">Prepared transactions from two-phase commit block VACUUM, hold locks indefinitely, and prevent XID advancement. Commit or rollback orphaned transactions immediately.
+  <a href="https://www.postgresql.org/docs/current/sql-prepare-transaction.html" target="_blank" rel="noopener">📖 PostgreSQL Docs: PREPARE TRANSACTION</a></p>
+  <div id="table-prepared-xacts" class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Transaction</th>
+          <th>GID</th>
+          <th>Owner</th>
+          <th>Database</th>
+          <th>Prepared</th>
+          <th>Age</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.PreparedXacts}}
+        <tr class="hot">
+          <td>{{.Transaction}}</td>
+          <td>{{.GID}}</td>
+          <td>{{.Owner}}</td>
+          <td>{{.Database}}</td>
+          <td>{{fmtTime .Prepared}}</td>
+          <td>{{.Age}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
   {{end}}
 
   <footer style="margin-top:24px;color:#6b7280;display:flex;align-items:center;gap:8px">Report generated at {{fmtTime

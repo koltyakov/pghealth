@@ -164,15 +164,6 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 	}
 	sort.Slice(reclaimList, func(i, j int) bool { return reclaimList[i].Bytes > reclaimList[j].Bytes })
 
-	// Precompute whether any client has a hostname to show
-	showHostname := false
-	for _, c := range res.ConnectionsByClient {
-		if c.Hostname != "" {
-			showHostname = true
-			break
-		}
-	}
-
 	// Build a combined set of unused indexes from both sources (candidates + bloat view), deduped
 	combined := make(map[string]collect.IndexUnused)
 	for _, iu := range res.IndexUnused {
@@ -349,15 +340,11 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 			return ""
 		}
 		top := res.ConnectionsByClient[0]
-		who := top.Address
-		if top.Hostname != "" {
-			who = top.Hostname
-		}
 		suffix := "s"
 		if top.Count == 1 {
 			suffix = ""
 		}
-		return fmt.Sprintf("Top client: %s (%d connection%s).", who, top.Count, suffix)
+		return fmt.Sprintf("Top client: %s (%d connection%s).", top.Address, top.Count, suffix)
 	}()
 	waitsSummary := func() string {
 		if len(res.WaitEvents) == 0 {
@@ -542,6 +529,47 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 				return "#hdr-settings"
 			case "cache-overall":
 				return "#hdr-cache-hit"
+			// New health check anchors
+			case "xid-wraparound-critical", "xid-age-warning":
+				if len(res.XIDAge) > 0 {
+					return "#hdr-xid-age"
+				}
+				return ""
+			case "idle-in-transaction":
+				if len(res.IdleInTransaction) > 0 {
+					return "#hdr-idle-in-transaction"
+				}
+				return ""
+			case "stale-statistics":
+				if len(res.StaleStatsTables) > 0 {
+					return "#hdr-stale-statistics"
+				}
+				return ""
+			case "duplicate-indexes":
+				if len(res.DuplicateIndexes) > 0 {
+					return "#hdr-duplicate-indexes"
+				}
+				return ""
+			case "invalid-indexes":
+				if len(res.InvalidIndexes) > 0 {
+					return "#hdr-invalid-indexes"
+				}
+				return ""
+			case "fk-missing-index":
+				if len(res.FKMissingIndexes) > 0 {
+					return "#hdr-fk-missing-indexes"
+				}
+				return ""
+			case "sequence-exhaustion-critical", "sequence-exhaustion-warning":
+				if len(res.SequenceHealth) > 0 {
+					return "#hdr-sequence-health"
+				}
+				return ""
+			case "prepared-transactions":
+				if len(res.PreparedXacts) > 0 {
+					return "#hdr-prepared-xacts"
+				}
+				return ""
 			}
 			// Fallback by keywords in title when code missing
 			lt := strings.ToLower(title)
@@ -680,7 +708,6 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		Res                 collect.Result
 		A                   analyze.Analysis
 		Meta                collect.Meta
-		ShowHostname        bool
 		Activity            []collect.Activity
 		TablesByRows        []collect.TableStat
 		TablesBySize        []collect.TableStat
@@ -709,7 +736,7 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		// attention lists
 		AttentionTotalTime []attnItem
 		AttentionCalls     []attnItem
-	}{Res: res, A: a, Meta: meta, ShowHostname: showHostname, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize,
+	}{Res: res, A: a, Meta: meta, Activity: activity, TablesByRows: tablesByRows, TablesBySize: tablesBySize,
 		ShowDBTablesByRows: showDBTablesByRows, ShowDBTablesBySize: showDBTablesBySize, ShowDBIndexUnused: showDBIndexUnused, ShowDBIndexUsageLow: showDBIndexUsageLow, ShowDBIndexCounts: showDBIndexCounts,
 		ReclaimByDB: reclaimList, ReclaimTotal: reclaimTotal,
 		ConnSummary: connSummary, DBsSummary: dbsSummary, CacheHitsSummary: cacheHitsSummary, IndexUnusedSummary: indexUnusedSummary,

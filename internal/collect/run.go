@@ -229,7 +229,6 @@ type PlanAdvice struct {
 
 // Healthcheck types
 type ClientConn struct {
-	Hostname    string
 	Address     string
 	User        string
 	Application string
@@ -1215,20 +1214,21 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	// Overall connection count
 	_ = queryRow(ctx, conn, `select count(*) from pg_stat_activity`, &res.TotalConnections)
 
-	// Connections by client (hostname, address, user, application)
-	if rows, err := conn.Query(ctx, `select coalesce(client_hostname,'') as client_hostname,
-			coalesce(client_addr::text,'local') as client_addr,
-			coalesce(usename,'') as usename,
-			coalesce(application_name,'') as application_name,
-			count(*) cnt
+	// Connections by client (address, user, application)
+	if rows, err := conn.Query(ctx, `select
+			coalesce(host(client_addr), 'local') as client_addr,
+			coalesce(usename, '') as usename,
+			coalesce(application_name, '') as application_name,
+			count(*) as cnt
 		from pg_stat_activity
 		where usename is not null
-		group by 1,2,3,4
+		group by 1, 2, 3
 		order by cnt desc`); err == nil {
 		for rows.Next() {
 			var c ClientConn
-			_ = rows.Scan(&c.Hostname, &c.Address, &c.User, &c.Application, &c.Count)
-			res.ConnectionsByClient = append(res.ConnectionsByClient, c)
+			if err := rows.Scan(&c.Address, &c.User, &c.Application, &c.Count); err == nil {
+				res.ConnectionsByClient = append(res.ConnectionsByClient, c)
+			}
 		}
 		rows.Close()
 	}
