@@ -105,6 +105,18 @@ func TestSwapDBInURL(t *testing.T) {
 			expected: "postgres://localhost/newdb",
 		},
 		{
+			name:     "URL without path preserves params",
+			url:      "postgres://localhost?sslmode=require",
+			db:       "newdb",
+			expected: "postgres://localhost/newdb?sslmode=require",
+		},
+		{
+			name:     "database name is escaped",
+			url:      "postgres://localhost/olddb?sslmode=require",
+			db:       "new db",
+			expected: "postgres://localhost/new%20db?sslmode=require",
+		},
+		{
 			name:     "invalid URL format",
 			url:      "not-a-valid-url",
 			db:       "newdb",
@@ -134,6 +146,7 @@ func TestQuoteIdent(t *testing.T) {
 		{`with"quote`, `"with""quote"`},
 		{"", `""`},
 		{"CamelCase", `"CamelCase"`},
+		{"café", `"café"`},
 	}
 
 	for _, tt := range tests {

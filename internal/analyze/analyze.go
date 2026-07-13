@@ -135,6 +135,15 @@ func Run(res collect.Result) Analysis {
 		Warnings:        make([]Finding, 0, 8),
 		Infos:           make([]Finding, 0, 16),
 	}
+	if len(res.Errors) > 0 {
+		a.Warnings = append(a.Warnings, Finding{
+			Title:       "Collection incomplete",
+			Severity:    SeverityWarning,
+			Code:        "collection-incomplete",
+			Description: fmt.Sprintf("%d collection scope(s) could not be read, so some report sections may be incomplete.", len(res.Errors)),
+			Action:      "Review the pghealth logs, connection settings, and database permissions, then rerun the report.",
+		})
+	}
 
 	// Uptime info
 	if !res.ConnInfo.StartTime.IsZero() {
@@ -148,25 +157,47 @@ func Run(res collect.Result) Analysis {
 	}
 
 	// Cache hit ratios
-	if res.CacheHitCurrent > 0 {
-		if res.CacheHitCurrent < cacheHitThreshold {
+	currentCacheHit := res.CacheHitCurrent
+	currentCacheSampled := currentCacheHit > 0
+	for _, ch := range res.CacheHits {
+		if ch.Datname == res.ConnInfo.CurrentDB && ch.BlksHit+ch.BlksRead > 0 {
+			currentCacheHit = ch.Ratio
+			currentCacheSampled = true
+			break
+		}
+	}
+	if currentCacheSampled {
+		if currentCacheHit < cacheHitThreshold {
 			a.Warnings = append(a.Warnings, Finding{
 				Title:       "Low cache hit ratio (current DB)",
 				Severity:    SeverityWarning,
-				Description: fmt.Sprintf("Cache hit: %.1f%%", res.CacheHitCurrent),
+				Description: fmt.Sprintf("Cache hit: %.1f%%", currentCacheHit),
 				Action:      "Review working set size, shared_buffers, and query patterns; ensure sufficient memory and indexes.",
 			})
 		} else {
-			a.Infos = append(a.Infos, Finding{Title: "Cache hit ratio (current)", Severity: SeverityInfo, Description: fmt.Sprintf("%.1f%%", res.CacheHitCurrent)})
+			a.Infos = append(a.Infos, Finding{Title: "Cache hit ratio (current)", Severity: SeverityInfo, Description: fmt.Sprintf("%.1f%%", currentCacheHit)})
 		}
 	}
-	if res.CacheHitOverall > 0 {
-		if res.CacheHitOverall < cacheHitThreshold {
+	overallCacheHit := res.CacheHitOverall
+	overallCacheSampled := overallCacheHit > 0
+	if !overallCacheSampled {
+		var hits, reads int64
+		for _, ch := range res.CacheHits {
+			hits += ch.BlksHit
+			reads += ch.BlksRead
+		}
+		if hits+reads > 0 {
+			overallCacheHit = float64(hits) / float64(hits+reads) * 100
+			overallCacheSampled = true
+		}
+	}
+	if overallCacheSampled {
+		if overallCacheHit < cacheHitThreshold {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Overall cache hit could improve",
 				Severity:    SeverityRec,
 				Code:        "cache-overall",
-				Description: fmt.Sprintf("Cluster-wide cache hit: %.1f%%", res.CacheHitOverall),
+				Description: fmt.Sprintf("Cluster-wide cache hit: %.1f%%", overallCacheHit),
 				Action:      "Consider memory tuning and index coverage across busiest databases.",
 			})
 		}
@@ -626,8 +657,8 @@ func Run(res collect.Result) Analysis {
 		for _, b := range res.TableBloatStats {
 			if b.EstimatedBloat > 50 {
 				severeBloat++
+				totalWasted += b.WastedBytes
 			}
-			totalWasted += b.WastedBytes
 		}
 		if severeBloat > 0 {
 			a.Warnings = append(a.Warnings, Finding{
@@ -643,17 +674,17 @@ func Run(res collect.Result) Analysis {
 
 	// Replication health
 	if len(res.ReplicationStats) > 0 {
-		lagIssues := 0
+		notStreaming := 0
 		for _, r := range res.ReplicationStats {
-			if r.SyncState != "sync" && r.SyncState != "quorum" {
-				lagIssues++
+			if !strings.EqualFold(r.State, "streaming") {
+				notStreaming++
 			}
 		}
-		if lagIssues > 0 {
+		if notStreaming > 0 {
 			a.Warnings = append(a.Warnings, Finding{
-				Title:       "Replication lag detected",
+				Title:       "Replication is not streaming",
 				Severity:    "warn",
-				Description: fmt.Sprintf("%d replicas not in sync state", lagIssues),
+				Description: fmt.Sprintf("%d replicas are not in streaming state", notStreaming),
 				Action:      "Check network connectivity, replica performance, and wal_sender/wal_receiver processes.",
 			})
 		}
@@ -675,7 +706,7 @@ func Run(res collect.Result) Analysis {
 				Title:       "Frequent requested checkpoints",
 				Severity:    "warn",
 				Description: fmt.Sprintf("%.1f%% of checkpoints are requested (not scheduled)", reqRatio),
-				Action:      "Increase max_wal_size and checkpoint_timeout; reduce checkpoint_completion_target if needed.",
+				Action:      "Increase max_wal_size and checkpoint_timeout; keep checkpoint_completion_target high enough to spread writes.",
 			})
 		}
 	}
@@ -751,13 +782,18 @@ func Run(res collect.Result) Analysis {
 			if dom("IO") {
 				sev = "warn"
 			}
-			a.Recommendations = append(a.Recommendations, Finding{
+			finding := Finding{
 				Title:       "IO-related waits",
 				Severity:    sev,
 				Code:        "io-waits",
 				Description: "pg_stat_activity shows IO waits (reads/writes/sync).",
 				Action:      "Improve cache hit (shared_buffers, indexing), tune effective_io_concurrency and checkpoint settings, and consider faster storage.",
-			})
+			}
+			if sev == SeverityWarning {
+				a.Warnings = append(a.Warnings, finding)
+			} else {
+				a.Recommendations = append(a.Recommendations, finding)
+			}
 		}
 		// Lock and LWLock waits
 		lw := get("LWLOCK")
@@ -767,13 +803,18 @@ func Run(res collect.Result) Analysis {
 			if dom("LOCK") || dom("LWLOCK") {
 				sev = "warn"
 			}
-			a.Warnings = append(a.Warnings, Finding{
+			finding := Finding{
 				Title:       "Lock contention waits",
 				Severity:    sev,
 				Code:        "lock-waits",
 				Description: "Waits due to locks/LWLocks detected; possible blockers or high contention.",
 				Action:      "Identify blockers (Blocking section), shorten transactions, add indexes to reduce lock duration, and consider lock timeouts.",
-			})
+			}
+			if sev == SeverityWarning {
+				a.Warnings = append(a.Warnings, finding)
+			} else {
+				a.Recommendations = append(a.Recommendations, finding)
+			}
 		}
 		// BufferPin waits (often long-running transactions pin buffers)
 		if get("BUFFERPIN") > 0 {
@@ -931,7 +972,7 @@ func Run(res collect.Result) Analysis {
 			a.Warnings = append(a.Warnings, Finding{
 				Title:       "High temporary file usage",
 				Severity:    "warn",
-				Description: fmt.Sprintf("Sessions using %.2f GB in temporary files", bytesToGB(totalTempBytes)),
+				Description: fmt.Sprintf("Databases used %.2f GB in temporary files since statistics reset", bytesToGB(totalTempBytes)),
 				Action:      "Increase work_mem; review queries with large sorts/hashes; consider temp_file_limit.",
 			})
 		}
@@ -1020,8 +1061,8 @@ func Run(res collect.Result) Analysis {
 
 	// max_parallel_workers heuristic
 	if s, ok := setting("max_parallel_workers"); ok {
-		val, _ := strconv.Atoi(s.Val)
-		if val > 0 && val < 2 { // effectively disabled
+		val, err := strconv.Atoi(s.Val)
+		if err == nil && val < 2 {
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "Parallel workers effectively disabled",
 				Severity:    "rec",
@@ -1068,7 +1109,7 @@ func Run(res collect.Result) Analysis {
 
 	// Maintenance work memory analysis
 	if s, ok := setting("maintenance_work_mem"); ok {
-		if val, _ := asBytes(s, true); val < 64*1024*1024 { // <64MB
+		if val, parsed := asBytes(s, true); parsed && val < 64*1024*1024 { // <64MB
 			a.Recommendations = append(a.Recommendations, Finding{
 				Title:       "maintenance_work_mem may be too low",
 				Severity:    "rec",
@@ -1105,7 +1146,7 @@ func Run(res collect.Result) Analysis {
 	}
 
 	// SSL configuration
-	if res.ConnInfo.SSL == "off" || res.ConnInfo.SSL == "" {
+	if res.ConnInfo.SSL == "off" {
 		a.Recommendations = append(a.Recommendations, Finding{
 			Title:       "SSL not enabled",
 			Severity:    "rec",
@@ -1317,13 +1358,28 @@ func Run(res collect.Result) Analysis {
 
 	// 8. Prepared Transactions (2PC) Analysis
 	if len(res.PreparedXacts) > 0 {
-		a.Warnings = append(a.Warnings, Finding{
-			Title:       "Prepared transactions detected",
-			Severity:    SeverityWarning,
-			Code:        "prepared-transactions",
-			Description: fmt.Sprintf("%d prepared (2PC) transactions found. These block vacuum, prevent XID advancement, and hold locks indefinitely until committed or rolled back.", len(res.PreparedXacts)),
-			Action:      "Investigate orphaned transactions with pg_prepared_xacts. Commit with COMMIT PREPARED 'gid' or rollback with ROLLBACK PREPARED 'gid'. Consider disabling max_prepared_transactions if not using 2PC.",
-		})
+		old := 0
+		cutoff := time.Now().Add(-preparedXactAgeHours * time.Hour)
+		for _, px := range res.PreparedXacts {
+			if px.Prepared.IsZero() || px.Prepared.Before(cutoff) {
+				old++
+			}
+		}
+		if old > 0 {
+			a.Warnings = append(a.Warnings, Finding{
+				Title:       "Old prepared transactions detected",
+				Severity:    SeverityWarning,
+				Code:        "prepared-transactions",
+				Description: fmt.Sprintf("%d prepared (2PC) transactions are older than %d hour(s). These can block vacuum, prevent XID advancement, and hold locks until committed or rolled back.", old, preparedXactAgeHours),
+				Action:      "Investigate orphaned transactions with pg_prepared_xacts. Commit with COMMIT PREPARED 'gid' or rollback with ROLLBACK PREPARED 'gid'. Consider disabling max_prepared_transactions if not using 2PC.",
+			})
+		} else {
+			a.Infos = append(a.Infos, Finding{
+				Title:       "Prepared transactions active",
+				Severity:    SeverityInfo,
+				Description: fmt.Sprintf("%d recent prepared (2PC) transactions found.", len(res.PreparedXacts)),
+			})
+		}
 	}
 
 	return a
@@ -1370,7 +1426,7 @@ func parseWithUnit(val string, unit string) (int64, bool) {
 	case "GB":
 		return n * 1024 * 1024 * 1024, true
 	default:
-		return n, true
+		return 0, false
 	}
 }
 func bytesToGB(b int64) float64 { return float64(b) / (1024 * 1024 * 1024) }

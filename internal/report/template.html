@@ -545,7 +545,6 @@
       <thead>
         <tr>
           <th>Database</th>
-          <th>PID</th>
           <th>Files</th>
           <th>Size</th>
         </tr>
@@ -554,7 +553,6 @@
         {{range .Res.TempFileStats}}
         <tr>
           <td>{{.Datname}}</td>
-          <td>{{.PID}}</td>
           <td>{{fmtI64 .Files}}</td>
           <td>{{fmtBytes .Bytes}}</td>
         </tr>

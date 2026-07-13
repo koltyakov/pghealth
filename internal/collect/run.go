@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -366,7 +367,6 @@ type LockStat struct {
 
 type TempFileStat struct {
 	Datname string
-	PID     int
 	Files   int64
 	Bytes   int64
 }
@@ -528,19 +528,25 @@ type PreparedXact struct {
 
 func Run(ctx context.Context, cfg Config) (Result, error) {
 	var res Result
+	if err := cfg.Validate(); err != nil {
+		return res, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	defer cancel()
 
 	conn, err := pgx.Connect(ctx, cfg.URL)
 	if err != nil {
 		return res, err
 	}
-	defer conn.Close(ctx)
+	defer conn.Close(context.Background())
 
 	// basic info
 	_ = queryRow(ctx, conn, `select version()`, &res.ConnInfo.Version)
 	_ = queryRow(ctx, conn, `select current_database()`, &res.ConnInfo.CurrentDB)
 	_ = queryRow(ctx, conn, `select current_user`, &res.ConnInfo.CurrentUser)
 	_ = queryRow(ctx, conn, `select setting::int from pg_settings where name='max_connections'`, &res.ConnInfo.MaxConnections)
-	_ = queryRow(ctx, conn, `show ssl`, &res.ConnInfo.SSL)
+	res.ConnInfo.SSL = "unknown"
+	_ = queryRow(ctx, conn, `select case when ssl then coalesce(version, 'on') else 'off' end from pg_stat_ssl where pid = pg_backend_pid()`, &res.ConnInfo.SSL)
 	_ = queryRow(ctx, conn, `select pg_postmaster_start_time()`, &res.ConnInfo.StartTime)
 
 	// Is superuser
@@ -548,7 +554,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 
 	// role membership (pg_monitor)
 	var hasMonitor bool
-	_ = queryRow(ctx, conn, `select exists(select 1 from pg_auth_members m join pg_roles r on r.oid=m.roleid where r.rolname='pg_monitor' and m.member=(select oid from pg_roles where rolname=current_user))`, &hasMonitor)
+	_ = queryRow(ctx, conn, `select pg_has_role(current_user, 'pg_monitor', 'MEMBER')`, &hasMonitor)
 	res.Roles.HasPgMonitor = hasMonitor
 
 	// extensions - robust detection and schema resolution
@@ -586,7 +592,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 
 	// settings of interest (subset)
 	rows, err = conn.Query(ctx, `select name, setting, unit, source from pg_settings where name in (
-		'shared_buffers','work_mem','maintenance_work_mem','effective_cache_size','max_connections','max_parallel_workers','wal_buffers','wal_level','max_wal_size','checkpoint_timeout','random_page_cost','seq_page_cost','effective_io_concurrency','autovacuum','autovacuum_naptime','track_io_timing','track_functions') order by name`)
+		'shared_buffers','work_mem','maintenance_work_mem','effective_cache_size','max_connections','max_parallel_workers','wal_buffers','wal_level','max_wal_size','checkpoint_timeout','random_page_cost','seq_page_cost','effective_io_concurrency','autovacuum','autovacuum_naptime','track_io_timing','track_functions','statement_timeout','idle_in_transaction_session_timeout') order by name`)
 	if err == nil {
 		for rows.Next() {
 			var s Setting
@@ -711,14 +717,10 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			if db == "" || db == res.ConnInfo.CurrentDB {
 				continue
 			}
-			// Build URL for target DB by replacing current_database()
-			targetURL := baseURL
-			// naive replace: if path component exists, swap last segment; otherwise append
-			// This is a simple heuristic; for complex URLs, users should pass a URL to the target DB directly.
-			if i := strings.LastIndex(targetURL, "/"); i != -1 {
-				targetURL = targetURL[:i+1] + db
-			} else {
-				targetURL += "/" + db
+			targetURL := swapDBInURL(baseURL, db)
+			if targetURL == "" {
+				res.Errors = append(res.Errors, fmt.Sprintf("db %q: invalid connection URL", db))
+				continue
 			}
 			ctxDB, cancelDB := context.WithTimeout(ctx, 10*time.Second)
 			dbConn, err := pgx.Connect(ctxDB, targetURL)
@@ -807,7 +809,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 				}
 				rows.Close()
 			}
-			dbConn.Close(ctx)
+			dbConn.Close(context.Background())
 		}
 	}
 
@@ -1482,18 +1484,28 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// Checkpoint statistics
-	if rows, err := conn.Query(ctx, `select checkpoints_req, checkpoints_timed,
-			checkpoint_write_time, checkpoint_sync_time,
+	// Checkpoint counters moved from pg_stat_bgwriter to pg_stat_checkpointer in PostgreSQL 17.
+	var hasCheckpointer bool
+	_ = queryRow(ctx, conn, `select to_regclass('pg_catalog.pg_stat_checkpointer') is not null`, &hasCheckpointer)
+	var checkpointWriteMS, checkpointSyncMS float64
+	if hasCheckpointer {
+		_ = conn.QueryRow(ctx, `select num_requested, num_timed, write_time::float8, sync_time::float8, buffers_written
+			from pg_stat_checkpointer`).Scan(
+			&res.CheckpointStats.RequestedCheckpoints, &res.CheckpointStats.ScheduledCheckpoints,
+			&checkpointWriteMS, &checkpointSyncMS, &res.CheckpointStats.BuffersCheckpoint,
+		)
+	} else {
+		_ = conn.QueryRow(ctx, `select checkpoints_req, checkpoints_timed,
+			checkpoint_write_time::float8, checkpoint_sync_time::float8,
 			buffers_checkpoint, buffers_clean
-		from pg_stat_bgwriter`); err == nil {
-		if rows.Next() {
-			_ = rows.Scan(&res.CheckpointStats.RequestedCheckpoints, &res.CheckpointStats.ScheduledCheckpoints,
-				&res.CheckpointStats.CheckpointWriteTime, &res.CheckpointStats.CheckpointSyncTime,
-				&res.CheckpointStats.BuffersCheckpoint, &res.CheckpointStats.BuffersWritten)
-		}
-		rows.Close()
+			from pg_stat_bgwriter`).Scan(
+			&res.CheckpointStats.RequestedCheckpoints, &res.CheckpointStats.ScheduledCheckpoints,
+			&checkpointWriteMS, &checkpointSyncMS,
+			&res.CheckpointStats.BuffersCheckpoint, &res.CheckpointStats.BuffersWritten,
+		)
 	}
+	res.CheckpointStats.CheckpointWriteTime = time.Duration(checkpointWriteMS * float64(time.Millisecond))
+	res.CheckpointStats.CheckpointSyncTime = time.Duration(checkpointSyncMS * float64(time.Millisecond))
 
 	// Memory statistics
 	// 1) bgwriter counters (approximate buffer allocation stats)
@@ -1535,7 +1547,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		res.MemoryStats.BuffercacheAvailable = hasBuffercache
 		if hasBuffercache {
 			var used int64
-			_ = queryRow(ctx, conn, `select count(*) from pg_buffercache`, &used)
+			_ = queryRow(ctx, conn, `select count(*) from pg_buffercache where relfilenode is not null`, &used)
 			res.MemoryStats.BuffercacheUsedBuffers = used
 			if res.MemoryStats.BlockSizeBytes > 0 && used > 0 {
 				res.MemoryStats.BuffercacheUsedBytes = used * res.MemoryStats.BlockSizeBytes
@@ -1551,20 +1563,23 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		}
 	}
 
-	// IO statistics
-	if rows, err := conn.Query(ctx, `select heap_blks_read, heap_blks_hit, idx_blks_read, idx_blks_hit,
-			toast_blks_read, toast_blks_hit, tidx_blks_read, tidx_blks_hit,
-			coalesce(blk_read_time, 0), coalesce(blk_write_time, 0)
-		from pg_stat_database
-		where datname = current_database()`); err == nil {
-		if rows.Next() {
-			_ = rows.Scan(&res.IOStats.HeapBlksRead, &res.IOStats.HeapBlksHit,
-				&res.IOStats.IdxBlksRead, &res.IOStats.IdxBlksHit,
-				&res.IOStats.ToastBlksRead, &res.IOStats.ToastBlksHit,
-				&res.IOStats.TidxBlksRead, &res.IOStats.TidxBlksHit,
-				&res.IOStats.ReadTime, &res.IOStats.WriteTime)
-		}
-		rows.Close()
+	// Relation block statistics and database I/O timing come from different views.
+	_ = conn.QueryRow(ctx, `select
+		coalesce(sum(heap_blks_read), 0)::bigint, coalesce(sum(heap_blks_hit), 0)::bigint,
+		coalesce(sum(idx_blks_read), 0)::bigint, coalesce(sum(idx_blks_hit), 0)::bigint,
+		coalesce(sum(toast_blks_read), 0)::bigint, coalesce(sum(toast_blks_hit), 0)::bigint,
+		coalesce(sum(tidx_blks_read), 0)::bigint, coalesce(sum(tidx_blks_hit), 0)::bigint
+		from pg_statio_user_tables`).Scan(
+		&res.IOStats.HeapBlksRead, &res.IOStats.HeapBlksHit,
+		&res.IOStats.IdxBlksRead, &res.IOStats.IdxBlksHit,
+		&res.IOStats.ToastBlksRead, &res.IOStats.ToastBlksHit,
+		&res.IOStats.TidxBlksRead, &res.IOStats.TidxBlksHit,
+	)
+	var readTimeMS, writeTimeMS float64
+	if err := conn.QueryRow(ctx, `select coalesce(blk_read_time, 0)::float8, coalesce(blk_write_time, 0)::float8
+		from pg_stat_database where datname = current_database()`).Scan(&readTimeMS, &writeTimeMS); err == nil {
+		res.IOStats.ReadTime = time.Duration(readTimeMS * float64(time.Millisecond))
+		res.IOStats.WriteTime = time.Duration(writeTimeMS * float64(time.Millisecond))
 	}
 
 	// Lock statistics
@@ -1583,15 +1598,15 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	// Temporary file statistics
-	if rows, err := conn.Query(ctx, `select datname, pid, temp_files, temp_bytes
-		from pg_stat_activity
-		where temp_files > 0 or temp_bytes > 0
+	// Temporary file statistics are cumulative per database.
+	if rows, err := conn.Query(ctx, `select datname, temp_files, temp_bytes
+		from pg_stat_database
+		where datname is not null and (temp_files > 0 or temp_bytes > 0)
 		order by temp_bytes desc
 		limit 20`); err == nil {
 		for rows.Next() {
 			var tfs TempFileStat
-			_ = rows.Scan(&tfs.Datname, &tfs.PID, &tfs.Files, &tfs.Bytes)
+			_ = rows.Scan(&tfs.Datname, &tfs.Files, &tfs.Bytes)
 			res.TempFileStats = append(res.TempFileStats, tfs)
 		}
 		rows.Close()
@@ -1639,7 +1654,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 					}
 					rows.Close()
 				}
-				c2.Close(ctx)
+				c2.Close(context.Background())
 			}
 		}
 	}
@@ -1861,7 +1876,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		rows.Close()
 	}
 
-	return res, nil
+	return res, ctx.Err()
 }
 
 func hasPgStatStatements(ctx context.Context, conn *pgx.Conn) bool {
@@ -1903,32 +1918,15 @@ func queryRow[T any](ctx context.Context, conn *pgx.Conn, sql string, dst *T) er
 	return row.Scan(dst)
 }
 
-// swapDBInURL naively replaces the last path segment of a libpq URL with the target DB.
-// It keeps query params and credentials intact. If parsing fails, returns empty string.
-func swapDBInURL(url string, db string) string {
-	// Handle simple postgres://user:pass@host:port/db?params
-	// We avoid importing net/url to keep dependencies lean; do a minimal split.
-	// Find path start after host: the first '/' after '://' occurrence.
-	idx := strings.Index(url, "://")
-	if idx == -1 {
+// swapDBInURL replaces the database path while preserving credentials and parameters.
+func swapDBInURL(rawURL string, db string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Host == "" {
 		return ""
 	}
-	// find the first '/' after '://'
-	slash := strings.Index(url[idx+3:], "/")
-	if slash == -1 {
-		// no path -> append
-		return url + "/" + db
-	}
-	head := url[:idx+3+slash] // up to '/'
-	rest := url[idx+3+slash+1:]
-	// rest may contain db and query params
-	qmark := strings.Index(rest, "?")
-	if qmark == -1 {
-		// replace entire rest with db
-		return head + "/" + db
-	}
-	// keep query string
-	return head + "/" + db + rest[qmark:]
+	u.Path = "/" + db
+	u.RawPath = ""
+	return u.String()
 }
 
 type pssOrder int
@@ -2032,15 +2030,7 @@ func qualifiedPSS(schema string) string {
 }
 
 func quoteIdent(s string) string {
-	out := `"`
-	for i := 0; i < len(s); i++ {
-		if s[i] == '"' {
-			out += "\"" // double quotes
-		}
-		out += string(s[i])
-	}
-	out += `"`
-	return out
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 func findPgStatStatementsSchema(ctx context.Context, conn *pgx.Conn) string {

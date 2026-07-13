@@ -36,6 +36,7 @@ Safety and behavior:
 - No superuser required. The tool attempts optional queries and continues if blocked (pg_monitor helps but isn’t required).
 - EXPLAIN plans are collected safely: SELECT/WITH only, no parameters, without ANALYZE, short timeouts.
 - Navigation is resilient: links are shown only when the corresponding section is present; table toggles scroll to section headers for context.
+- Reports and prompt sidecars can contain SQL text, user names, and schema details, so generated files are restricted to the current OS user.
 
 Multi-DB mode:
 

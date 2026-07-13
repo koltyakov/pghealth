@@ -103,7 +103,10 @@ func run() int {
 
 	res, err := collect.Run(ctx, cfg.ToCollectorConfig())
 	if err != nil {
-		// Log as warning but continue - partial data may still be useful
+		if res.ConnInfo.CurrentDB == "" {
+			log.Printf("collection failed: %v", err)
+			return exitCollectError
+		}
 		log.Printf("collection warning: %v", err)
 	}
 
@@ -213,12 +216,12 @@ func (f Flags) Validate() error {
 		return errors.New("database URL is required: use -url flag or set PGURL/DATABASE_URL environment variable")
 	}
 
-	if f.Timeout <= 0 {
-		return errors.New("timeout must be positive")
+	if f.Timeout < collect.MinTimeout {
+		return fmt.Errorf("timeout must be at least %v", collect.MinTimeout)
 	}
 
-	if f.Timeout > 10*time.Minute {
-		return errors.New("timeout exceeds maximum allowed value of 10 minutes")
+	if f.Timeout > collect.MaxTimeout {
+		return fmt.Errorf("timeout exceeds maximum allowed value of %v", collect.MaxTimeout)
 	}
 
 	return nil

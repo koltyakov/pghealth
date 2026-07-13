@@ -67,6 +67,21 @@ func TestLowCacheHitWarning(t *testing.T) {
 	}
 }
 
+func TestZeroCacheHitWithSamplesWarns(t *testing.T) {
+	res := collect.Result{
+		ConnInfo:   collect.ConnInfo{CurrentDB: "testdb"},
+		CacheHits:  []collect.CacheHit{{Datname: "testdb", BlksRead: 100, Ratio: 0}},
+		Extensions: collect.Extensions{PgStatStatements: true},
+	}
+	a := Run(res)
+	for _, warning := range a.Warnings {
+		if warning.Title == "Low cache hit ratio (current DB)" {
+			return
+		}
+	}
+	t.Fatal("expected warning for sampled 0% cache hit ratio")
+}
+
 // TestConnectionUsageWarning verifies connection usage warnings.
 func TestConnectionUsageWarning(t *testing.T) {
 	tests := []struct {
@@ -223,6 +238,16 @@ func TestAnalysisInitialization(t *testing.T) {
 	}
 	if a.Infos == nil {
 		t.Error("Infos slice should not be nil")
+	}
+}
+
+func TestCollectionErrorsProduceWarning(t *testing.T) {
+	a := Run(collect.Result{
+		Errors:     []string{"db unavailable"},
+		Extensions: collect.Extensions{PgStatStatements: true},
+	})
+	if !hasFindingCode(a.Warnings, "collection-incomplete") {
+		t.Fatal("collection errors should be visible as a warning")
 	}
 }
 
@@ -507,4 +532,47 @@ func TestPreparedTransactionsWarning(t *testing.T) {
 	if !foundWarning {
 		t.Error("expected warning for prepared transactions")
 	}
+}
+
+func TestRecentPreparedTransactionIsInformational(t *testing.T) {
+	res := collect.Result{
+		PreparedXacts: []collect.PreparedXact{{GID: "tx1", Prepared: time.Now().Add(-time.Minute)}},
+		Extensions:    collect.Extensions{PgStatStatements: true},
+	}
+	a := Run(res)
+	for _, warning := range a.Warnings {
+		if warning.Code == "prepared-transactions" {
+			t.Fatal("recent prepared transaction should not produce an orphan warning")
+		}
+	}
+}
+
+func TestWaitFindingsMatchSeverityCategory(t *testing.T) {
+	dominantIO := Run(collect.Result{
+		WaitEvents: []collect.WaitEventStat{{Type: "IO", Event: "DataFileRead", Count: 10}},
+		Extensions: collect.Extensions{PgStatStatements: true},
+	})
+	if !hasFindingCode(dominantIO.Warnings, "io-waits") {
+		t.Fatal("dominant IO waits should be warnings")
+	}
+
+	mixedLocks := Run(collect.Result{
+		WaitEvents: []collect.WaitEventStat{
+			{Type: "Lock", Event: "relation", Count: 1},
+			{Type: "Client", Event: "ClientRead", Count: 9},
+		},
+		Extensions: collect.Extensions{PgStatStatements: true},
+	})
+	if !hasFindingCode(mixedLocks.Recommendations, "lock-waits") {
+		t.Fatal("non-dominant lock waits should be recommendations")
+	}
+}
+
+func hasFindingCode(findings []Finding, code string) bool {
+	for _, finding := range findings {
+		if finding.Code == code {
+			return true
+		}
+	}
+	return false
 }

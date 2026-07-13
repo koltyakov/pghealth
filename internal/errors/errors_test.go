@@ -120,6 +120,9 @@ func TestMultiError(t *testing.T) {
 	if !errors.Is(me, err1) {
 		t.Error("MultiError should match first error")
 	}
+	if !errors.Is(me, err2) {
+		t.Error("MultiError should match every contained error")
+	}
 
 	expected := "2 errors occurred; first: error 1"
 	if me.Error() != expected {
@@ -162,7 +165,15 @@ func TestMultiErrorEmpty(t *testing.T) {
 	if me.Error() != "no errors" {
 		t.Errorf("empty MultiError.Error() should return 'no errors'")
 	}
-	if me.Unwrap() != nil {
-		t.Error("empty MultiError.Unwrap() should return nil")
+	if len(me.Unwrap()) != 0 {
+		t.Error("empty MultiError.Unwrap() should be empty")
+	}
+}
+
+func TestTypedErrorsDoNotMatchUnrelatedInstances(t *testing.T) {
+	err1 := NewQueryError("SELECT 1", errors.New("first"))
+	err2 := NewQueryError("SELECT 2", errors.New("second"))
+	if errors.Is(err1, err2) {
+		t.Error("unrelated QueryError values must not compare equal")
 	}
 }

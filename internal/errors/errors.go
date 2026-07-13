@@ -74,12 +74,6 @@ func (e *CollectionError) Unwrap() error {
 	return e.Err
 }
 
-// Is reports whether target matches this error type.
-func (e *CollectionError) Is(target error) bool {
-	_, ok := target.(*CollectionError)
-	return ok
-}
-
 // ValidationError represents a configuration or input validation error.
 type ValidationError struct {
 	Field   string // Field that failed validation
@@ -103,12 +97,6 @@ func (e *ValidationError) Error() string {
 // Unwrap returns ErrInvalidConfig for errors.Is support.
 func (e *ValidationError) Unwrap() error {
 	return ErrInvalidConfig
-}
-
-// Is reports whether target matches this error type.
-func (e *ValidationError) Is(target error) bool {
-	_, ok := target.(*ValidationError)
-	return ok
 }
 
 // QueryError represents a database query error.
@@ -139,12 +127,6 @@ func (e *QueryError) Unwrap() error {
 	return e.Err
 }
 
-// Is reports whether target matches this error type.
-func (e *QueryError) Is(target error) bool {
-	_, ok := target.(*QueryError)
-	return ok
-}
-
 // ReportError represents an error during report generation.
 type ReportError struct {
 	Phase string // Phase that failed (e.g., "template", "render", "write")
@@ -168,12 +150,6 @@ func (e *ReportError) Error() string {
 // Unwrap returns the underlying error for errors.Is/As support.
 func (e *ReportError) Unwrap() error {
 	return e.Err
-}
-
-// Is reports whether target matches this error type.
-func (e *ReportError) Is(target error) bool {
-	_, ok := target.(*ReportError)
-	return ok
 }
 
 // MultiError aggregates multiple errors into a single error.
@@ -201,12 +177,9 @@ func (me *MultiError) Error() string {
 	}
 }
 
-// Unwrap returns the first error for errors.Is/As support.
-func (me *MultiError) Unwrap() error {
-	if len(me.Errors) == 0 {
-		return nil
-	}
-	return me.Errors[0]
+// Unwrap returns all underlying errors for errors.Is/As support.
+func (me *MultiError) Unwrap() []error {
+	return me.Errors
 }
 
 // ErrorOrNil returns nil if no errors were added, otherwise returns the MultiError.

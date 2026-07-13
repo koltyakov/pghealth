@@ -208,6 +208,14 @@ func TestFlagsValidate(t *testing.T) {
 			expectErr: true,
 		},
 		{
+			name: "timeout below collector minimum",
+			flags: Flags{
+				URL:     "postgres://localhost/test",
+				Timeout: time.Second,
+			},
+			expectErr: true,
+		},
+		{
 			name: "excessive timeout",
 			flags: Flags{
 				URL:     "postgres://localhost/test",

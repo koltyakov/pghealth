@@ -8,8 +8,10 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -81,17 +83,12 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		a.Infos = []analyze.Finding{}
 	}
 
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("create output file: %w", err)
-	}
-	defer func() {
-		if cerr := f.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("close output file: %w", cerr)
-		}
-	}()
-
 	// Sort numerical metrics descending so greater numbers show on top
+	res.DBs = append([]collect.Database(nil), res.DBs...)
+	res.Activity = append([]collect.Activity(nil), res.Activity...)
+	res.IndexUnused = append([]collect.IndexUnused(nil), res.IndexUnused...)
+	res.Indexes = append([]collect.IndexStat(nil), res.Indexes...)
+	res.TablesWithIndexCount = append([]collect.TableIndexCount(nil), res.TablesWithIndexCount...)
 	sort.Slice(res.DBs, func(i, j int) bool { return res.DBs[i].SizeBytes > res.DBs[j].SizeBytes })
 	sort.Slice(res.Activity, func(i, j int) bool {
 		if res.Activity[i].Count == res.Activity[j].Count {
@@ -745,7 +742,57 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 		AttentionTotalTime: attentionTotalTime,
 		AttentionCalls:     attentionCalls,
 	}
-	return tmpl.Execute(f, data)
+	return writeFileAtomic(path, 0o600, func(w io.Writer) error {
+		return tmpl.Execute(w, data)
+	})
+}
+
+func writeFileAtomic(path string, perm os.FileMode, write func(io.Writer) error) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temporary output file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return fmt.Errorf("set output permissions: %w", err)
+	}
+	if err := write(tmp); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write output: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close output: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		// Windows cannot rename over an existing file. Move the old file aside so
+		// it can be restored if installing the new file fails.
+		info, statErr := os.Lstat(path)
+		if statErr != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("replace output file: %w", err)
+		}
+		backup, backupErr := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".backup-*")
+		if backupErr != nil {
+			return fmt.Errorf("create output backup path: %w", backupErr)
+		}
+		backupPath := backup.Name()
+		if closeErr := backup.Close(); closeErr != nil {
+			os.Remove(backupPath)
+			return fmt.Errorf("close output backup: %w", closeErr)
+		}
+		os.Remove(backupPath)
+		if backupErr := os.Rename(path, backupPath); backupErr != nil {
+			return fmt.Errorf("back up existing output file: %w", backupErr)
+		}
+		if replaceErr := os.Rename(tmpPath, path); replaceErr != nil {
+			_ = os.Rename(backupPath, path)
+			return fmt.Errorf("replace output file: %w", replaceErr)
+		}
+		_ = os.Remove(backupPath)
+	}
+	return nil
 }
 
 // fmtFloat previously trimmed trailing zeros; replaced by fmtFloatPrecSep

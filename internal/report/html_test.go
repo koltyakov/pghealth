@@ -1,6 +1,9 @@
 package report
 
 import (
+	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -19,5 +22,43 @@ func TestTemplateExec(t *testing.T) {
 
 	if err := WriteHTML(out, res, a, meta); err != nil {
 		t.Fatalf("WriteHTML failed: %v", err)
+	}
+	info, err := os.Stat(out)
+	if err != nil {
+		t.Fatalf("stat report: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("report permissions = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestWriteHTMLDoesNotReorderInput(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "report.html")
+	res := collect.Result{DBs: []collect.Database{{Name: "small", SizeBytes: 1}, {Name: "large", SizeBytes: 2}}}
+	if err := WriteHTML(out, res, analyze.Analysis{}, collect.Meta{}); err != nil {
+		t.Fatalf("WriteHTML failed: %v", err)
+	}
+	if res.DBs[0].Name != "small" {
+		t.Fatalf("WriteHTML reordered caller data: %#v", res.DBs)
+	}
+}
+
+func TestAtomicWritePreservesExistingFileOnRenderError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.html")
+	if err := os.WriteFile(path, []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("render failed")
+	err := writeFileAtomic(path, 0o600, func(_ io.Writer) error { return wantErr })
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("writeFileAtomic error = %v, want %v", err, wantErr)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "existing" {
+		t.Fatalf("existing file changed to %q", got)
 	}
 }
