@@ -255,10 +255,34 @@ func Run(res collect.Result) Analysis {
 			Action:      "CREATE EXTENSION IF NOT EXISTS pg_stat_statements; and set shared_preload_libraries='pg_stat_statements' then restart.",
 		})
 	}
-	if !res.ConnInfo.IsSuperuser && !res.Roles.HasPgMonitor {
+	permissionChecksAvailable := false
+	totalChecks := 0
+	grantedChecks := 0
+	missingChecks := make([]string, 0, 3)
+	for _, permission := range res.Permissions {
+		if permission.Name == "pg_monitor" || !permission.Available {
+			continue
+		}
+		permissionChecksAvailable = true
+		totalChecks++
+		if permission.Granted {
+			grantedChecks++
+		} else {
+			missingChecks = append(missingChecks, permission.Name)
+		}
+	}
+	if !res.ConnInfo.IsSuperuser && permissionChecksAvailable && len(missingChecks) > 0 {
+		a.Infos = append(a.Infos, Finding{
+			Title:       "Metrics visibility limited",
+			Severity:    "info",
+			Code:        "metrics-visibility",
+			Description: fmt.Sprintf("Monitoring coverage: %d/%d capabilities granted. Missing: %s. Some metrics may be hidden rather than healthy or empty.", grantedChecks, totalChecks, strings.Join(missingChecks, ", ")),
+			Action:      "Ask an administrator to grant pg_monitor for complete read-only monitoring, or grant only the required predefined roles.",
+		})
+	} else if !res.ConnInfo.IsSuperuser && !permissionChecksAvailable && !res.Roles.HasPgMonitor {
 		a.Infos = append(a.Infos, Finding{
 			Title:       "Limited privileges",
-			Severity:    "info",
+			Severity:    SeverityInfo,
 			Description: "Current role lacks superuser/pg_monitor; some stats may be unavailable.",
 			Action:      "Ask an admin to grant membership in pg_monitor for richer visibility.",
 		})

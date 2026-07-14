@@ -251,6 +251,38 @@ func TestCollectionErrorsProduceWarning(t *testing.T) {
 	}
 }
 
+func TestPermissionCoverageIsInformational(t *testing.T) {
+	a := Run(collect.Result{
+		Permissions: []collect.PermissionCheck{
+			{Name: "pg_monitor", Available: true},
+			{Name: "pg_read_all_stats", Available: true, Granted: true},
+			{Name: "pg_read_all_settings", Available: true},
+			{Name: "pg_stat_scan_tables", Available: true},
+		},
+		Extensions: collect.Extensions{PgStatStatements: true},
+	})
+	if !hasFindingCode(a.Infos, "metrics-visibility") {
+		t.Fatal("missing monitoring permissions should produce an informational finding")
+	}
+	if hasFindingCode(a.Warnings, "metrics-visibility") {
+		t.Fatal("missing monitoring permissions should not be classified as database health warnings")
+	}
+}
+
+func TestCompletePermissionCoverageHasNoFinding(t *testing.T) {
+	a := Run(collect.Result{
+		Permissions: []collect.PermissionCheck{
+			{Name: "pg_read_all_stats", Available: true, Granted: true},
+			{Name: "pg_read_all_settings", Available: true, Granted: true},
+			{Name: "pg_stat_scan_tables", Available: true, Granted: true},
+		},
+		Extensions: collect.Extensions{PgStatStatements: true},
+	})
+	if hasFindingCode(a.Infos, "metrics-visibility") {
+		t.Fatal("complete monitoring coverage should not produce a limitation finding")
+	}
+}
+
 // TestHighConnectionsRecommendation verifies high max_connections recommendation.
 func TestHighConnectionsRecommendation(t *testing.T) {
 	res := collect.Result{

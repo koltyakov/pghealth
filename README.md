@@ -34,6 +34,7 @@ What you'll see in the report:
 Safety and behavior:
 
 - No superuser required. The tool attempts optional queries and continues if blocked (pg_monitor helps but isn’t required).
+- Monitoring coverage reports access to `pg_monitor`, `pg_read_all_stats`, `pg_read_all_settings`, and `pg_stat_scan_tables`, so missing data is not mistaken for a healthy state.
 - EXPLAIN plans are collected safely: SELECT/WITH only, no parameters, without ANALYZE, short timeouts.
 - Navigation is resilient: links are shown only when the corresponding section is present; table toggles scroll to section headers for context.
 - Reports and prompt sidecars can contain SQL text, user names, and schema details, so generated files are restricted to the current OS user.

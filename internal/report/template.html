@@ -389,6 +389,31 @@
   </div>
   {{if .ClientsSummary}}<p class="section-note">{{.ClientsSummary}}</p>{{end}}
 
+  {{if .Res.Permissions}}
+  <h2 id="hdr-permissions">Monitoring permissions</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Capability</th>
+          <th>Granted</th>
+          <th>Metrics impact</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Res.Permissions}}
+        {{if .Available}}<tr>
+          <td>{{.Name}}</td>
+          <td>{{if .Granted}}Yes{{else}}No{{end}}</td>
+          <td>{{.Impact}}</td>
+        </tr>{{end}}
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  <p class="section-note">Missing monitoring permissions reduce visibility; they do not by themselves indicate an unhealthy database.</p>
+  {{end}}
+
   <h2 id="hdr-settings">Settings (subset)</h2>
   <div id="table-settings" class="table-wrap collapsed">
     <table>

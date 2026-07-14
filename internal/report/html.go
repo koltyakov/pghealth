@@ -526,6 +526,11 @@ func WriteHTML(path string, res collect.Result, a analyze.Analysis, meta collect
 				return "#hdr-settings"
 			case "cache-overall":
 				return "#hdr-cache-hit"
+			case "metrics-visibility":
+				if len(res.Permissions) > 0 {
+					return "#hdr-permissions"
+				}
+				return ""
 			// New health check anchors
 			case "xid-wraparound-critical", "xid-age-warning":
 				if len(res.XIDAge) > 0 {

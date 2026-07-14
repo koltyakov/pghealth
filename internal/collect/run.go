@@ -47,9 +47,10 @@ const (
 // Fields are populated based on available permissions and extensions.
 type Result struct {
 	// Connection and server information
-	ConnInfo   ConnInfo   // Basic connection and server details
-	Extensions Extensions // Installed PostgreSQL extensions
-	Roles      Roles      // Role memberships for the connected user
+	ConnInfo    ConnInfo          // Basic connection and server details
+	Extensions  Extensions        // Installed PostgreSQL extensions
+	Roles       Roles             // Role memberships for the connected user
+	Permissions []PermissionCheck // Monitoring capabilities for the connected user
 
 	// Database-level metrics
 	DBs      []Database // List of databases with sizes and connections
@@ -127,6 +128,14 @@ type Extensions struct {
 
 type Roles struct {
 	HasPgMonitor bool
+}
+
+// PermissionCheck describes access to a predefined PostgreSQL monitoring role.
+type PermissionCheck struct {
+	Name      string
+	Granted   bool
+	Available bool
+	Impact    string
 }
 
 type Database struct {
@@ -552,10 +561,13 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	// Is superuser
 	_ = queryRow(ctx, conn, `select rolsuper from pg_roles where rolname = current_user`, &res.ConnInfo.IsSuperuser)
 
-	// role membership (pg_monitor)
-	var hasMonitor bool
-	_ = queryRow(ctx, conn, `select pg_has_role(current_user, 'pg_monitor', 'MEMBER')`, &hasMonitor)
-	res.Roles.HasPgMonitor = hasMonitor
+	res.Permissions = collectPermissionChecks(ctx, conn, res.ConnInfo.IsSuperuser)
+	for _, permission := range res.Permissions {
+		if permission.Name == "pg_monitor" {
+			res.Roles.HasPgMonitor = permission.Granted
+			break
+		}
+	}
 
 	// extensions - robust detection and schema resolution
 	res.Extensions.PgStatStatements = hasPgStatStatements(ctx, conn)
@@ -1877,6 +1889,23 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	}
 
 	return res, ctx.Err()
+}
+
+func collectPermissionChecks(ctx context.Context, conn *pgx.Conn, isSuperuser bool) []PermissionCheck {
+	checks := []PermissionCheck{
+		{Name: "pg_monitor", Impact: "All standard monitoring views and functions"},
+		{Name: "pg_read_all_stats", Impact: "Other sessions' SQL text and full statistics"},
+		{Name: "pg_read_all_settings", Impact: "Configuration values restricted to privileged roles"},
+		{Name: "pg_stat_scan_tables", Impact: "Statistics functions that may acquire table-level locks"},
+	}
+	for i := range checks {
+		err := conn.QueryRow(ctx, `select true, pg_has_role(current_user, oid, 'MEMBER')
+			from pg_roles where rolname = $1`, checks[i].Name).Scan(&checks[i].Available, &checks[i].Granted)
+		if err == nil && isSuperuser {
+			checks[i].Granted = true
+		}
+	}
+	return checks
 }
 
 func hasPgStatStatements(ctx context.Context, conn *pgx.Conn) bool {

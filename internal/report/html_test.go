@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/koltyakov/pghealth/internal/analyze"
@@ -41,6 +42,27 @@ func TestWriteHTMLDoesNotReorderInput(t *testing.T) {
 	}
 	if res.DBs[0].Name != "small" {
 		t.Fatalf("WriteHTML reordered caller data: %#v", res.DBs)
+	}
+}
+
+func TestWriteHTMLShowsMonitoringPermissions(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "report.html")
+	res := collect.Result{Permissions: []collect.PermissionCheck{{
+		Name:      "pg_read_all_stats",
+		Available: true,
+		Granted:   false,
+		Impact:    "Other sessions' SQL text and full statistics",
+	}}}
+	if err := WriteHTML(out, res, analyze.Analysis{}, collect.Meta{}); err != nil {
+		t.Fatalf("WriteHTML failed: %v", err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	if !strings.Contains(html, "Monitoring permissions") || !strings.Contains(html, "pg_read_all_stats") {
+		t.Fatal("monitoring permission coverage was not rendered")
 	}
 }
 
